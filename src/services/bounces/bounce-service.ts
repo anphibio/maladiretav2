@@ -32,6 +32,10 @@ function normalizeEmail(value: string | undefined): string | undefined {
   return match?.[0]?.toLowerCase();
 }
 
+function getTopLevelHeaderBlock(raw: string): string {
+  return raw.split(/\r?\n\r?\n/, 1)[0] ?? raw;
+}
+
 function getHeaderValue(raw: string, header: string): string | undefined {
   const escaped = header.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
   const match = raw.match(new RegExp(`^${escaped}:\\s*(.+(?:\\r?\\n[ \\t].+)*)`, "im"));
@@ -61,7 +65,8 @@ function hasBounceSignal(raw: string, subject?: string): boolean {
 }
 
 function parseBounce(raw: string): BounceCandidate | null {
-  const subject = getHeaderValue(raw, "Subject");
+  const topLevelHeaders = getTopLevelHeaderBlock(raw);
+  const subject = getHeaderValue(topLevelHeaders, "Subject");
 
   if (!hasBounceSignal(raw, subject)) {
     return null;
@@ -84,6 +89,10 @@ function parseBounce(raw: string): BounceCandidate | null {
     normalizeEmail(finalRecipient) ??
     normalizeEmail(originalRecipient) ??
     normalizeEmail(xFailedRecipients);
+
+  if (!recipientEmail && !diagnosticCode && !status && !action) {
+    return null;
+  }
 
   if (!campaignId && !recipientId && !recipientEmail) {
     return null;
@@ -197,22 +206,39 @@ function extractFetchBody(response: string): string {
   return response.slice(literalStart + 2, taggedIndex);
 }
 
+async function findBounceRecipient(candidate: BounceCandidate) {
+  if (candidate.recipientEmail) {
+    const recipientByEmail = await prisma.campaignRecipient.findFirst({
+      where: {
+        email: candidate.recipientEmail,
+        ...(candidate.campaignId ? { campaignId: candidate.campaignId } : {}),
+        status: { in: ["SENT", "PENDING"] }
+      },
+      include: { campaign: true },
+      orderBy: { updatedAt: "desc" }
+    });
+
+    if (recipientByEmail) {
+      return recipientByEmail;
+    }
+  }
+
+  if (!candidate.recipientId) {
+    return null;
+  }
+
+  return prisma.campaignRecipient.findFirst({
+    where: {
+      id: candidate.recipientId,
+      ...(candidate.campaignId ? { campaignId: candidate.campaignId } : {}),
+      ...(candidate.recipientEmail ? { email: candidate.recipientEmail } : {})
+    },
+    include: { campaign: true }
+  });
+}
+
 async function applyBounce(candidate: BounceCandidate): Promise<BounceResult> {
-  const recipient =
-    candidate.recipientId
-      ? await prisma.campaignRecipient.findUnique({
-          where: { id: candidate.recipientId },
-          include: { campaign: true }
-        })
-      : await prisma.campaignRecipient.findFirst({
-          where: {
-            email: candidate.recipientEmail,
-            ...(candidate.campaignId ? { campaignId: candidate.campaignId } : {}),
-            status: { in: ["SENT", "PENDING"] }
-          },
-          include: { campaign: true },
-          orderBy: { updatedAt: "desc" }
-        });
+  const recipient = await findBounceRecipient(candidate);
 
   if (!recipient) {
     return {
