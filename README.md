@@ -14,9 +14,9 @@ Sistema institucional de mala direta integrado ao Zimbra, com autenticação pel
 
 ## Requisitos
 
-- Node.js 22+
-- PostgreSQL 16+
-- Redis 7+
+- Docker e Docker Compose para produção ou QNAP
+- Node.js 22+ para desenvolvimento local sem Docker
+- PostgreSQL 16+ e Redis 7+ quando rodar localmente fora do Compose de produção
 - Acesso ao servidor Zimbra institucional
 
 ## Configuração local
@@ -75,6 +75,86 @@ npm run dev
 ```bash
 npm run queue:worker
 ```
+
+## Produção com Docker Compose
+
+O arquivo `docker-compose.prod.yml` sobe a aplicação completa em containers:
+
+- `postgres`: banco PostgreSQL;
+- `redis`: Redis usado pelo BullMQ e pelas credenciais temporárias;
+- `migrate`: executa `prisma migrate deploy`;
+- `web`: aplicação Next.js;
+- `worker`: consumidor BullMQ responsável por envios e checagem automática de bounces.
+
+Esse é o fluxo recomendado para QNAP, porque evita depender de Node.js ou npm instalados no sistema do NAS.
+
+1. Clone ou atualize o repositório:
+
+```bash
+cd /share/Container
+git clone git@github.com:anphibio/maladiretav2.git maladiretav2
+cd /share/Container/maladiretav2
+```
+
+Para atualizar uma pasta já existente:
+
+```bash
+git fetch origin main
+git reset --hard origin/main
+```
+
+2. Crie o `.env`:
+
+```bash
+cp .env.example .env
+```
+
+Edite o arquivo e configure pelo menos:
+
+```env
+APP_ENV="production"
+APP_URL="http://IP_OU_HOST_DO_QNAP:3000"
+DATABASE_URL="postgresql://maladireta:maladireta@postgres:5432/maladireta"
+REDIS_URL="redis://redis:6379"
+ZIMBRA_SMTP_HOST="smtp.tceal.tc.br"
+ZIMBRA_IMAP_HOST="smtp.tceal.tc.br"
+SESSION_SECRET="troque-por-um-valor-longo-e-aleatorio"
+JWT_SECRET="troque-por-outro-valor-longo-e-aleatorio"
+QUEUE_DISPATCH_ENABLED="true"
+BOOTSTRAP_ADMIN_EMAILS="seu.usuario@tceal.tc.br"
+```
+
+3. Suba todos os serviços:
+
+```bash
+docker compose -f docker-compose.prod.yml up -d --build
+```
+
+O serviço `migrate` roda automaticamente antes do `web` e do `worker`.
+
+4. Verifique o estado:
+
+```bash
+docker compose -f docker-compose.prod.yml ps
+```
+
+5. Consulte logs:
+
+```bash
+docker compose -f docker-compose.prod.yml logs -f web
+docker compose -f docker-compose.prod.yml logs -f worker
+docker compose -f docker-compose.prod.yml logs migrate
+```
+
+6. Reinicie após alterações:
+
+```bash
+git fetch origin main
+git reset --hard origin/main
+docker compose -f docker-compose.prod.yml up -d --build
+```
+
+Sem o container `worker`, campanhas podem ficar aguardando envio e bounces não serão processados.
 
 ## Rotas iniciais
 
