@@ -34,6 +34,10 @@ function sign(payload: string): string {
   return createHmac("sha256", getSessionSecret()).update(payload).digest("base64url");
 }
 
+function shouldUseSecureCookie(): boolean {
+  return process.env.APP_URL?.startsWith("https://") ?? false;
+}
+
 export function createSessionToken(payload: Omit<SessionPayload, "exp">): string {
   const body = base64Url(
     JSON.stringify({
@@ -78,7 +82,7 @@ export async function setSessionCookie(payload: Omit<SessionPayload, "exp">): Pr
   cookieStore.set(SESSION_COOKIE_NAME, createSessionToken(payload), {
     httpOnly: true,
     sameSite: "lax",
-    secure: process.env.APP_ENV === "production",
+    secure: shouldUseSecureCookie(),
     path: "/",
     maxAge: SESSION_MAX_AGE_SECONDS
   });

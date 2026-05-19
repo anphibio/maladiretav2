@@ -124,6 +124,8 @@ QUEUE_DISPATCH_ENABLED="true"
 BOOTSTRAP_ADMIN_EMAILS="seu.usuario@tceal.tc.br"
 ```
 
+Use `APP_URL` com `http://` quando acessar direto pelo IP e porta do QNAP. Se a aplicação ficar atrás de proxy HTTPS, troque para `https://...`; essa configuração define se o cookie de sessão será marcado como seguro.
+
 3. Suba todos os serviços:
 
 ```bash
