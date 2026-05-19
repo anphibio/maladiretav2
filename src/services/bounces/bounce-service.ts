@@ -84,13 +84,12 @@ function parseBounce(raw: string): BounceCandidate | null {
     .filter(Boolean)
     .join(" | ")
     .slice(0, 1000);
-  const fallbackReason = subject && hasBounceSignal("", subject) ? subject : undefined;
   const recipientEmail =
     normalizeEmail(finalRecipient) ??
     normalizeEmail(originalRecipient) ??
     normalizeEmail(xFailedRecipients);
 
-  if (!recipientEmail && !diagnosticCode && !status && !action) {
+  if (!recipientEmail || !reason) {
     return null;
   }
 
@@ -102,7 +101,7 @@ function parseBounce(raw: string): BounceCandidate | null {
     campaignId,
     recipientId,
     recipientEmail,
-    reason: reason || fallbackReason || "Bounce detectado na caixa de retorno."
+    reason
   };
 }
 
