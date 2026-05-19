@@ -1,0 +1,307 @@
+# Sistema de Mala Direta TCE-AL
+
+Sistema institucional de mala direta integrado ao Zimbra, com autenticação pelo e-mail institucional, campanhas auditáveis, fila de envio, rate limit por domínio e dashboards administrativos.
+
+## Tecnologias
+
+- Next.js, React, TypeScript e TailwindCSS
+- Prisma ORM e PostgreSQL
+- Redis e BullMQ
+- Nodemailer para integração SMTP com Zimbra
+- Zod para validação
+- Recharts para dashboards
+- Docker e Docker Compose
+
+## Requisitos
+
+- Node.js 22+
+- PostgreSQL 16+
+- Redis 7+
+- Acesso ao servidor Zimbra institucional
+
+## Configuração local
+
+1. Instale as dependências:
+
+```bash
+npm install
+```
+
+2. Crie o arquivo de ambiente:
+
+```bash
+cp .env.example .env
+```
+
+3. Preencha as variáveis do Zimbra no `.env` e troque os segredos por valores longos e aleatórios. Não coloque credenciais reais no código-fonte.
+
+4. Configure o primeiro administrador:
+
+```env
+BOOTSTRAP_ADMIN_EMAILS="seu.usuario@tceal.tc.br"
+```
+
+Quando esse usuário autenticar com sucesso no Zimbra, ele será criado/atualizado como `ADMIN`.
+
+5. Suba PostgreSQL e Redis:
+
+```bash
+docker compose up -d postgres redis
+```
+
+Se aparecer erro de permissão no Docker, abra o Docker Desktop, aguarde o serviço iniciar e teste:
+
+```bash
+docker info
+```
+
+PostgreSQL e Redis precisam estar ouvindo em `localhost:5432` e `localhost:6379`.
+
+6. Gere o Prisma Client e execute a primeira migration:
+
+```bash
+npm run prisma:generate
+npm run prisma:migrate
+```
+
+7. Rode a aplicação:
+
+```bash
+npm run dev
+```
+
+8. Em outro terminal, rode o worker da fila:
+
+```bash
+npm run queue:worker
+```
+
+## Rotas iniciais
+
+- `/login`: tela de autenticação institucional
+- `/dashboard`: métricas e gráficos operacionais
+- `/campaigns`: base de gerenciamento de campanhas
+- `/admin`: painel administrativo
+- `/logs`: auditoria e eventos
+- `/settings`: limites e parâmetros operacionais
+- `/api/health`: verificação simples da aplicação
+
+## Login institucional
+
+Na tela de login, o usuário informa apenas o nome da conta. O domínio `@tceal.tc.br` é fixo na interface e o backend monta o e-mail institucional antes de validar no Zimbra.
+
+Exemplo:
+
+```txt
+Campo usuário: joao.silva
+E-mail validado: joao.silva@tceal.tc.br
+```
+
+Após autenticação válida, o sistema cria uma sessão local assinada em cookie `httpOnly` e registra logs de acesso e auditoria. A senha do Zimbra é usada apenas na tentativa de autenticação e não é armazenada.
+
+## Campanhas
+
+A página `/campaigns` já lista campanhas reais do banco respeitando o perfil do usuário. Operadores visualizam apenas as próprias campanhas; administradores e auditores podem visualizar a base completa.
+
+Ao criar uma campanha, o formulário aceita destinatários por CSV, XLSX, TXT ou preenchimento manual, anexos, corpo em texto puro ou editor visual HTML, e três ações:
+
+- salvar como rascunho;
+- agendar para data e hora futuras;
+- enviar/preparar a fila imediatamente.
+
+O remetente é definido no backend a partir da sessão autenticada:
+
+```txt
+Usuário logado: joao.silva@tceal.tc.br
+Remetente gravado na campanha: joao.silva@tceal.tc.br
+```
+
+Não existe campo de edição manual do remetente.
+
+Campanhas agendadas ficam com status `Agendado` e aparecem com a data/hora na listagem e no detalhe. Para processar campanhas cujo horário chegou, configure `CRON_SECRET` no `.env` e chame periodicamente:
+
+```txt
+POST /api/cron/scheduled-campaigns
+Header: x-cron-secret: valor-do-CRON_SECRET
+```
+
+Esse processamento prepara a fila respeitando os limites por domínio. Se o disparo automático estiver ativado (`QUEUE_DISPATCH_ENABLED="true"`), a fila continua exigindo credencial temporária do Zimbra para envio efetivo.
+
+Na tela de detalhe da campanha, o sistema permite:
+
+- editar nome, assunto e conteúdo enquanto estiver em rascunho;
+- pausar campanhas em fila ou enviando;
+- cancelar campanhas ainda não finalizadas;
+- marcar destinatários com falha para reenvio;
+- preparar novamente a fila após reenvio de falhas.
+
+Todas as transições validam status e permissão no backend e registram auditoria.
+
+## Importação de destinatários
+
+A tela de detalhe da campanha, em `/campaigns/[id]`, permite importar destinatários em campanhas com status de rascunho.
+
+Formatos aceitos:
+
+- CSV
+- XLSX
+
+Campos mínimos:
+
+```txt
+email,nome
+```
+
+Campos opcionais:
+
+```txt
+cpf,setor,cargo,orgao,cidade,estado,tags
+```
+
+Durante a importação, o sistema valida e-mails, remove duplicados dentro do arquivo, identifica o domínio de destino, grava destinatários válidos, cria um lote de importação e registra erros por linha.
+
+## Teste e preparação da fila
+
+A tela de detalhe da campanha permite enviar um e-mail de teste informando a senha do Zimbra naquele momento. Essa senha não é armazenada.
+
+Também é possível preparar a fila da campanha. Essa ação cria um `email_job` por destinatário, calcula atrasos por domínio e muda a campanha para `Em fila`.
+
+Os envios são distribuídos pela fila com os limites padrão abaixo:
+
+- delay mínimo de 20 segundos entre mensagens;
+- delay máximo de 45 segundos entre mensagens;
+- pausa a cada 25 envios;
+- duração da pausa de 300 segundos;
+- limite de 90 envios por hora.
+
+Domínios Microsoft (`outlook.com`, `hotmail.com`, `live.com` e `msn.com`) mantêm tratamento diferenciado e mais cauteloso: no mínimo 60 segundos entre mensagens, pausa a cada 15 envios, pausa de 600 segundos e limite de 60 envios por hora.
+
+Por segurança, o disparo automático para o BullMQ fica desativado por padrão:
+
+```env
+QUEUE_DISPATCH_ENABLED="false"
+```
+
+Quando essa opção estiver `true`, a preparação da fila exige a senha do Zimbra naquele momento. A senha é validada no Zimbra, criptografada com AES-GCM usando chave derivada de `SESSION_SECRET`, guardada temporariamente no Redis com expiração e usada pelo worker para os envios SMTP.
+
+A senha não é gravada no PostgreSQL nem em logs. Ao final dos jobs pendentes da campanha, a credencial temporária é removida do Redis.
+
+## Checagem de bounces
+
+O sistema marca falhas posteriores ao envio quando recebe mensagens de retorno na caixa do usuário logado. Cada e-mail enviado pela fila recebe os cabeçalhos `X-Campaign-Id` e `X-Recipient-Id`, permitindo vincular o retorno ao destinatário correto.
+
+Configure apenas a pasta IMAP a ser lida:
+
+```env
+BOUNCE_IMAP_MAILBOX="INBOX"
+```
+
+Quando a campanha termina de enviar, o worker agenda automaticamente checagens IMAP usando a mesma credencial temporária validada para o disparo SMTP da campanha. Essas checagens rodam em segundo plano e atualizam os logs da campanha com status `BOUNCED` quando encontram retornos.
+
+A guia Logs continua oferecendo o botão `Checar bounces` para conferência manual imediata. A senha do usuário autenticado é usada apenas naquela checagem, seguindo o mesmo princípio do disparo SMTP.
+
+A rotina lê mensagens não vistas, detecta DSN/bounces, marca o destinatário como `Falhou`, registra `BOUNCED` nos logs de envio e reavalia o status da campanha.
+
+## Administração
+
+A página `/admin` é restrita a usuários com perfil `ADMIN`.
+
+Funcionalidades disponíveis nesta etapa:
+
+- resumo de jobs aguardando, ativos e com falha;
+- criação ou atualização de limites por domínio;
+- gerenciamento de usuários autorizados;
+- alteração de perfil `ADMIN`, `OPERATOR` ou `AUDITOR`;
+- ativação e desativação de usuários;
+- inicialização automática dos domínios sensíveis `outlook.com`, `hotmail.com`, `live.com` e `msn.com`;
+- auditoria `ADMIN_CHANGED` quando um limite é alterado.
+
+Operadores e auditores visualizam uma mensagem de acesso restrito.
+
+O sistema não cria nem armazena senha local para usuários. A autorização administrativa altera apenas perfil e status; a autenticação continua sendo feita pelo Zimbra.
+
+## Logs e auditoria
+
+A página `/logs` consulta registros reais do banco e separa os eventos em:
+
+- auditoria (`audit_logs`);
+- acessos (`access_logs`);
+- envios (`email_logs`).
+
+Administradores e auditores visualizam todos os registros. Operadores visualizam apenas registros associados ao próprio usuário, e-mail remetente ou sessão.
+
+A API `/api/logs` aceita filtros simples:
+
+```txt
+/api/logs?type=audit&q=LOGIN&limit=50
+/api/logs?type=access&q=usuario@tceal.tc.br
+/api/logs?type=email&q=FAILED
+```
+
+## Relatórios CSV
+
+A API `/api/reports` exporta relatórios em CSV, sempre respeitando o perfil do usuário autenticado.
+
+Tipos disponíveis:
+
+```txt
+/api/reports?type=campaigns
+/api/reports?type=failures
+/api/reports?type=access
+/api/reports?type=audit
+```
+
+Também aceita filtros:
+
+```txt
+/api/reports?type=audit&q=LOGIN&limit=1000
+```
+
+Toda exportação registra auditoria `REPORT_EXPORTED`.
+
+## Dashboard
+
+A página `/dashboard` usa dados reais do banco para exibir:
+
+- total de campanhas;
+- e-mails enviados;
+- falhas;
+- campanhas agendadas;
+- taxa de sucesso;
+- jobs aguardando;
+- jobs com falha;
+- envios e falhas por dia;
+- falhas por domínio;
+- campanhas recentes.
+
+Operadores visualizam apenas seus próprios dados. Administradores e auditores visualizam o consolidado geral.
+
+## Configurações
+
+A página `/settings` persiste parâmetros operacionais na tabela `settings`.
+
+Configurações disponíveis:
+
+- limite padrão de e-mails por minuto;
+- delay padrão entre mensagens;
+- máximo de destinatários por campanha;
+- envio automático de jobs para o BullMQ.
+
+Administradores podem alterar os valores. Outros perfis podem consultar. A preparação da fila usa os valores persistidos no banco e só recorre ao `.env` para inicializar padrões.
+
+## Segurança
+
+- A senha do Zimbra não deve ser armazenada no banco.
+- O remetente das campanhas deve ser sempre o usuário autenticado.
+- Logs de auditoria não devem ser apagáveis pela interface.
+- Credenciais, hosts internos e segredos devem ficar somente em variáveis de ambiente.
+- APIs críticas devem aplicar validação, autorização, rate limit e logs.
+
+## Próximas etapas técnicas
+
+1. Implementar autenticação real via Zimbra com sessão local segura.
+2. Criar APIs de campanhas, destinatários e importação CSV/XLSX.
+3. Persistir jobs no banco e enfileirar envios no BullMQ.
+4. Implementar rate limit por domínio no worker.
+5. Conectar dashboards e tabelas aos dados reais.
+6. Implementar exportações CSV/XLSX/PDF.

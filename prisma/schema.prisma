@@ -1,0 +1,296 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+enum UserRole {
+  ADMIN
+  OPERATOR
+  AUDITOR
+}
+
+enum CampaignStatus {
+  DRAFT
+  SCHEDULED
+  QUEUED
+  SENDING
+  SENT
+  FAILED
+  PAUSED
+  CANCELED
+  COMPLETED
+}
+
+enum RecipientStatus {
+  PENDING
+  SENT
+  FAILED
+  RESENT
+  CANCELED
+}
+
+enum EmailJobStatus {
+  WAITING
+  ACTIVE
+  COMPLETED
+  FAILED
+  RETRYING
+  CANCELED
+}
+
+enum AuditAction {
+  LOGIN_SUCCESS
+  LOGIN_FAILURE
+  LOGOUT
+  CAMPAIGN_CREATED
+  CAMPAIGN_UPDATED
+  CAMPAIGN_SENT
+  CAMPAIGN_PAUSED
+  CAMPAIGN_CANCELED
+  RECIPIENTS_IMPORTED
+  ADMIN_CHANGED
+  REPORT_EXPORTED
+  EMAIL_SEND_FAILURE
+}
+
+model User {
+  id          String    @id @default(cuid())
+  name        String?
+  email       String    @unique
+  role        UserRole  @default(OPERATOR)
+  active      Boolean   @default(true)
+  lastLoginAt DateTime?
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @updatedAt
+
+  campaigns  Campaign[]
+  accessLogs AccessLog[]
+  auditLogs  AuditLog[]
+  roles       UserRoleMap[]
+
+  @@map("users")
+}
+
+model Role {
+  id          String     @id @default(cuid())
+  name        UserRole   @unique
+  description String?
+  createdAt   DateTime   @default(now())
+  users       UserRoleMap[]
+
+  @@map("roles")
+}
+
+model UserRoleMap {
+  id        String   @id @default(cuid())
+  userId    String
+  roleId    String
+  createdAt DateTime @default(now())
+
+  role Role @relation(fields: [roleId], references: [id])
+  user User @relation(fields: [userId], references: [id])
+
+  @@unique([userId, roleId])
+  @@map("user_roles")
+}
+
+model Campaign {
+  id           String         @id @default(cuid())
+  name         String
+  subject      String
+  htmlBody     String
+  textBody     String
+  senderEmail  String
+  ownerUserId  String
+  status       CampaignStatus @default(DRAFT)
+  scheduledAt  DateTime?
+  startedAt    DateTime?
+  finishedAt   DateTime?
+  createdAt    DateTime       @default(now())
+  updatedAt    DateTime       @updatedAt
+
+  owner       User                @relation(fields: [ownerUserId], references: [id])
+  recipients  CampaignRecipient[]
+  emailJobs   EmailJob[]
+  emailLogs   EmailLog[]
+  importBatches ImportBatch[]
+  attachments CampaignAttachment[]
+
+  @@index([ownerUserId])
+  @@index([status])
+  @@map("campaigns")
+}
+
+model CampaignAttachment {
+  id          String   @id @default(cuid())
+  campaignId  String
+  filename    String
+  contentType String
+  sizeBytes   Int
+  content     Bytes
+  createdAt   DateTime @default(now())
+
+  campaign Campaign @relation(fields: [campaignId], references: [id])
+
+  @@index([campaignId])
+  @@map("campaign_attachments")
+}
+
+model CampaignRecipient {
+  id          String          @id @default(cuid())
+  campaignId  String
+  email       String
+  name        String?
+  cpf         String?
+  setor       String?
+  cargo       String?
+  orgao       String?
+  cidade      String?
+  estado      String?
+  tags        String[]
+  domain      String
+  status      RecipientStatus @default(PENDING)
+  errorMessage String?
+  sentAt      DateTime?
+  createdAt   DateTime        @default(now())
+  updatedAt   DateTime        @updatedAt
+
+  campaign Campaign @relation(fields: [campaignId], references: [id])
+  emailJobs EmailJob[]
+
+  @@unique([campaignId, email])
+  @@index([domain])
+  @@index([status])
+  @@map("campaign_recipients")
+}
+
+model EmailJob {
+  id          String         @id @default(cuid())
+  campaignId  String
+  recipientId String
+  queueJobId  String?
+  status      EmailJobStatus @default(WAITING)
+  attempts    Int            @default(0)
+  lastError   String?
+  scheduledAt DateTime?
+  createdAt   DateTime       @default(now())
+  updatedAt   DateTime       @updatedAt
+
+  campaign  Campaign          @relation(fields: [campaignId], references: [id])
+  recipient CampaignRecipient @relation(fields: [recipientId], references: [id])
+
+  @@index([status])
+  @@map("email_jobs")
+}
+
+model EmailLog {
+  id             String   @id @default(cuid())
+  campaignId     String
+  recipientEmail String
+  senderEmail    String
+  status         String
+  smtpResponse   String?
+  errorMessage   String?
+  attempts       Int      @default(0)
+  sentAt         DateTime?
+  createdAt      DateTime @default(now())
+
+  campaign Campaign @relation(fields: [campaignId], references: [id])
+
+  @@index([campaignId])
+  @@index([recipientEmail])
+  @@map("email_logs")
+}
+
+model AccessLog {
+  id        String   @id @default(cuid())
+  userId    String?
+  email     String
+  action    String
+  ip        String?
+  userAgent String?
+  success   Boolean
+  createdAt DateTime @default(now())
+
+  user User? @relation(fields: [userId], references: [id])
+
+  @@index([email])
+  @@index([createdAt])
+  @@map("access_logs")
+}
+
+model AuditLog {
+  id         String      @id @default(cuid())
+  userId     String?
+  userEmail  String?
+  action     AuditAction
+  entityType String?
+  entityId   String?
+  ip         String?
+  userAgent  String?
+  metadata   Json?
+  createdAt  DateTime    @default(now())
+
+  user User? @relation(fields: [userId], references: [id])
+
+  @@index([action])
+  @@index([createdAt])
+  @@map("audit_logs")
+}
+
+model Setting {
+  id          String   @id @default(cuid())
+  key         String   @unique
+  value       String
+  description String?
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  @@map("settings")
+}
+
+model DomainRateLimit {
+  id               String   @id @default(cuid())
+  domain           String   @unique
+  messagesPerMinute Int
+  delayMs          Int
+  active           Boolean  @default(true)
+  createdAt        DateTime @default(now())
+  updatedAt        DateTime @updatedAt
+
+  @@map("domain_rate_limits")
+}
+
+model ImportBatch {
+  id                String   @id @default(cuid())
+  campaignId         String
+  filename           String
+  totalRows          Int
+  validRows          Int
+  invalidRows        Int
+  duplicatesRemoved  Int
+  createdAt          DateTime @default(now())
+
+  campaign Campaign @relation(fields: [campaignId], references: [id])
+  errors   ImportError[]
+
+  @@map("import_batches")
+}
+
+model ImportError {
+  id            String   @id @default(cuid())
+  importBatchId String
+  rowNumber     Int
+  email         String?
+  reason        String
+  rawData       Json?
+  createdAt     DateTime @default(now())
+
+  importBatch ImportBatch @relation(fields: [importBatchId], references: [id])
+
+  @@map("import_errors")
+}
