@@ -362,6 +362,75 @@ export async function resetFailedRecipients(input: { campaignId: string; user: U
   return updated.count;
 }
 
+export async function updateFailedRecipientEmail(input: {
+  campaignId: string;
+  recipientId: string;
+  email: string;
+  user: User;
+}) {
+  const normalizedEmail = input.email.trim().toLowerCase();
+  const domain = normalizedEmail.split("@")[1]?.toLowerCase();
+
+  if (!domain) {
+    throw new Error("E-mail inválido.");
+  }
+
+  const recipient = await prisma.campaignRecipient.findFirst({
+    where: {
+      id: input.recipientId,
+      campaignId: input.campaignId,
+      status: "FAILED",
+      campaign: {
+        ...(input.user.role === "OPERATOR" ? { ownerUserId: input.user.id } : {})
+      }
+    },
+    include: {
+      campaign: true
+    }
+  });
+
+  if (!recipient) {
+    throw new Error("Destinatário com falha não encontrado ou sem permissão.");
+  }
+
+  const duplicate = await prisma.campaignRecipient.findFirst({
+    where: {
+      campaignId: input.campaignId,
+      email: normalizedEmail,
+      id: { not: recipient.id }
+    }
+  });
+
+  if (duplicate) {
+    throw new Error("Já existe outro destinatário com esse e-mail nesta campanha.");
+  }
+
+  const updated = await prisma.campaignRecipient.update({
+    where: { id: recipient.id },
+    data: {
+      email: normalizedEmail,
+      domain,
+      errorMessage: null
+    }
+  });
+
+  await registerAuditLog({
+    userId: input.user.id,
+    userEmail: input.user.email,
+    action: AuditAction.CAMPAIGN_UPDATED,
+    entityType: "campaign_recipient",
+    entityId: recipient.id,
+    metadata: {
+      kind: "failed_recipient_email_updated",
+      campaignId: input.campaignId,
+      previousEmail: recipient.email,
+      nextEmail: normalizedEmail
+    }
+  });
+
+  return updated;
+}
+
 export function getCampaignStatusLabel(status: CampaignStatus): string {
   const labels: Record<CampaignStatus, string> = {
     DRAFT: "Rascunho",
