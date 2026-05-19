@@ -5,7 +5,11 @@ import { validateZimbraCredentials } from "@/services/zimbra/zimbra-service";
 import { enqueueCampaignRecipient } from "@/services/queue/email-queue";
 import { registerAuditLog } from "@/services/audit/audit-service";
 import { getSystemSettings } from "@/services/settings/settings-service";
-import { getTemporaryLoginCredential, storeTemporaryZimbraCredential } from "@/services/zimbra/credential-vault";
+import {
+  getTemporaryLoginCredential,
+  storeTemporaryLoginCredential,
+  storeTemporaryZimbraCredential
+} from "@/services/zimbra/credential-vault";
 import type { QueueCampaignInput, SendTestInput } from "@/features/campaigns/send-schemas";
 
 const ONE_HOUR_MS = 60 * 60 * 1000;
@@ -233,6 +237,13 @@ export async function prepareCampaignQueue(input: { campaignId: string; user: Us
       email: input.user.email,
       password
     });
+
+    if (input.payload.password) {
+      await storeTemporaryLoginCredential({
+        email: input.user.email,
+        password
+      });
+    }
 
     await storeTemporaryZimbraCredential({
       campaignId: campaign.id,

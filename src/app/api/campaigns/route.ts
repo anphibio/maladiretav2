@@ -68,81 +68,90 @@ export async function POST(request: NextRequest) {
     return NextResponse.json({ message: "A data do agendamento precisa ser futura." }, { status: 400 });
   }
 
-  const campaign = await createDraftCampaign(parsed.data, user);
+  try {
+    const campaign = await createDraftCampaign(parsed.data, user);
 
-  if (formData) {
-    const recipientMode = String(formData.get("recipientMode") ?? "csv");
-    const recipientFile = formData.get("recipientFile");
-    const manualRecipients = String(formData.get("manualRecipients") ?? "");
+    if (formData) {
+      const recipientMode = String(formData.get("recipientMode") ?? "csv");
+      const recipientFile = formData.get("recipientFile");
+      const manualRecipients = String(formData.get("manualRecipients") ?? "");
 
-    if ((recipientMode === "csv" || recipientMode === "txt") && recipientFile instanceof File && recipientFile.size > 0) {
-      const parsedRecipients = await parseRecipientFile(recipientFile);
-      await importParsedRecipientsToCampaign({
-        campaignId: campaign.id,
-        filename: recipientFile.name,
-        parsed: parsedRecipients,
-        user
-      });
-    }
-
-    if (recipientMode === "manual" && manualRecipients.trim()) {
-      await importParsedRecipientsToCampaign({
-        campaignId: campaign.id,
-        filename: "destinatarios-informados.txt",
-        parsed: parseRecipientText(manualRecipients),
-        user
-      });
-    }
-
-    const attachments = formData
-      .getAll("attachments")
-      .filter((file): file is File => file instanceof File && file.size > 0);
-
-    await addCampaignAttachments({
-      campaignId: campaign.id,
-      files: attachments,
-      user
-    });
-
-    if (intent === "send") {
-      const queueResult = await prepareCampaignQueue({
-        campaignId: campaign.id,
-        user,
-        payload: {
-          password: String(formData.get("queuePassword") ?? "") || undefined
-        }
-      });
-
-      return NextResponse.json(
-        {
-          campaign: {
-            id: campaign.id,
-            name: campaign.name,
-            subject: campaign.subject,
-            senderEmail: campaign.senderEmail,
-            status: "QUEUED",
-            scheduledAt: campaign.scheduledAt,
-            createdAt: campaign.createdAt
-          },
-          queue: queueResult
-        },
-        { status: 201 }
-      );
-    }
-  }
-
-  return NextResponse.json(
-    {
-      campaign: {
-        id: campaign.id,
-        name: campaign.name,
-        subject: campaign.subject,
-        senderEmail: campaign.senderEmail,
-        status: campaign.status,
-        scheduledAt: campaign.scheduledAt,
-        createdAt: campaign.createdAt
+      if ((recipientMode === "csv" || recipientMode === "txt") && recipientFile instanceof File && recipientFile.size > 0) {
+        const parsedRecipients = await parseRecipientFile(recipientFile);
+        await importParsedRecipientsToCampaign({
+          campaignId: campaign.id,
+          filename: recipientFile.name,
+          parsed: parsedRecipients,
+          user
+        });
       }
-    },
-    { status: 201 }
-  );
+
+      if (recipientMode === "manual" && manualRecipients.trim()) {
+        await importParsedRecipientsToCampaign({
+          campaignId: campaign.id,
+          filename: "destinatarios-informados.txt",
+          parsed: parseRecipientText(manualRecipients),
+          user
+        });
+      }
+
+      const attachments = formData
+        .getAll("attachments")
+        .filter((file): file is File => file instanceof File && file.size > 0);
+
+      await addCampaignAttachments({
+        campaignId: campaign.id,
+        files: attachments,
+        user
+      });
+
+      if (intent === "send") {
+        const queueResult = await prepareCampaignQueue({
+          campaignId: campaign.id,
+          user,
+          payload: {
+            password: String(formData.get("queuePassword") ?? "") || undefined
+          }
+        });
+
+        return NextResponse.json(
+          {
+            campaign: {
+              id: campaign.id,
+              name: campaign.name,
+              subject: campaign.subject,
+              senderEmail: campaign.senderEmail,
+              status: "QUEUED",
+              scheduledAt: campaign.scheduledAt,
+              createdAt: campaign.createdAt
+            },
+            queue: queueResult
+          },
+          { status: 201 }
+        );
+      }
+    }
+
+    return NextResponse.json(
+      {
+        campaign: {
+          id: campaign.id,
+          name: campaign.name,
+          subject: campaign.subject,
+          senderEmail: campaign.senderEmail,
+          status: campaign.status,
+          scheduledAt: campaign.scheduledAt,
+          createdAt: campaign.createdAt
+        }
+      },
+      { status: 201 }
+    );
+  } catch (error) {
+    return NextResponse.json(
+      {
+        message: error instanceof Error ? error.message : "Não foi possível criar a campanha."
+      },
+      { status: 400 }
+    );
+  }
 }
