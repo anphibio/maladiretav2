@@ -39,21 +39,51 @@ function getHeaderValue(raw: string, header: string): string | undefined {
   return match?.[1]?.replace(/\r?\n[ \t]+/g, " ").trim();
 }
 
+function getDeliveryStatusValue(raw: string, field: string): string | undefined {
+  const escaped = field.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  const match = raw.match(new RegExp(`^${escaped}:\\s*(.+(?:\\r?\\n[ \\t].+)*)`, "im"));
+
+  return match?.[1]?.replace(/\r?\n[ \t]+/g, " ").trim();
+}
+
+function hasBounceSignal(raw: string, subject?: string): boolean {
+  const normalizedSubject = subject?.toLowerCase() ?? "";
+
+  return (
+    /report-type\s*=\s*delivery-status/i.test(raw) ||
+    /content-type:\s*message\/delivery-status/i.test(raw) ||
+    /^Final-Recipient:/im.test(raw) ||
+    /^Diagnostic-Code:/im.test(raw) ||
+    /^Action:\s*(failed|delayed)/im.test(raw) ||
+    /^Status:\s*[45]\./im.test(raw) ||
+    /\b(undelivered mail returned|delivery status notification|mail delivery failed|failure notice|delivery failure)\b/i.test(normalizedSubject)
+  );
+}
+
 function parseBounce(raw: string): BounceCandidate | null {
+  const subject = getHeaderValue(raw, "Subject");
+
+  if (!hasBounceSignal(raw, subject)) {
+    return null;
+  }
+
   const campaignId = getHeaderValue(raw, "X-Campaign-Id");
   const recipientId = getHeaderValue(raw, "X-Recipient-Id");
-  const finalRecipient = raw.match(/^Final-Recipient:\s*[^;]+;\s*(.+)$/im)?.[1];
-  const originalRecipient = raw.match(/^Original-Recipient:\s*[^;]+;\s*(.+)$/im)?.[1];
-  const diagnosticCode = raw.match(/^Diagnostic-Code:\s*(.+(?:\r?\n[ \t].+)*)$/im)?.[1];
-  const status = raw.match(/^Status:\s*(.+)$/im)?.[1];
-  const action = raw.match(/^Action:\s*(.+)$/im)?.[1];
-  const subject = getHeaderValue(raw, "Subject");
-  const reason = [action, status, diagnosticCode, subject]
+  const xFailedRecipients = getHeaderValue(raw, "X-Failed-Recipients");
+  const finalRecipient = getDeliveryStatusValue(raw, "Final-Recipient")?.split(";").at(-1);
+  const originalRecipient = getDeliveryStatusValue(raw, "Original-Recipient")?.split(";").at(-1);
+  const diagnosticCode = getDeliveryStatusValue(raw, "Diagnostic-Code");
+  const status = getDeliveryStatusValue(raw, "Status");
+  const action = getDeliveryStatusValue(raw, "Action");
+  const reason = [action, status, diagnosticCode]
     .filter(Boolean)
     .join(" | ")
-    .replace(/\r?\n[ \t]+/g, " ")
     .slice(0, 1000);
-  const recipientEmail = normalizeEmail(finalRecipient) ?? normalizeEmail(originalRecipient) ?? normalizeEmail(raw);
+  const fallbackReason = subject && hasBounceSignal("", subject) ? subject : undefined;
+  const recipientEmail =
+    normalizeEmail(finalRecipient) ??
+    normalizeEmail(originalRecipient) ??
+    normalizeEmail(xFailedRecipients);
 
   if (!campaignId && !recipientId && !recipientEmail) {
     return null;
@@ -63,7 +93,7 @@ function parseBounce(raw: string): BounceCandidate | null {
     campaignId,
     recipientId,
     recipientEmail,
-    reason: reason || "Bounce detectado na caixa de retorno."
+    reason: reason || fallbackReason || "Bounce detectado na caixa de retorno."
   };
 }
 
