@@ -18,36 +18,29 @@ function getCredentialKey(campaignId: string): string {
   return `zimbra:campaign-credential:${campaignId}`;
 }
 
+function getUserCredentialKey(email: string): string {
+  return `zimbra:user-credential:${email.toLowerCase()}`;
+}
+
 function getBounceChecksKey(campaignId: string): string {
   return `${AUTO_BOUNCE_CHECKS_KEY_PREFIX}${campaignId}`;
 }
 
-export async function storeTemporaryZimbraCredential(input: {
-  campaignId: string;
-  email: string;
-  password: string;
-}) {
+function encryptCredential(input: { email: string; password: string }): string {
   const iv = randomBytes(12);
   const cipher = createCipheriv("aes-256-gcm", getEncryptionKey(), iv);
   const encrypted = Buffer.concat([cipher.update(input.password, "utf8"), cipher.final()]);
   const authTag = cipher.getAuthTag();
-  const payload = JSON.stringify({
+
+  return JSON.stringify({
     email: input.email,
     iv: iv.toString("base64url"),
     authTag: authTag.toString("base64url"),
     encrypted: encrypted.toString("base64url")
   });
-
-  await getRedisClient().set(getCredentialKey(input.campaignId), payload, "EX", CREDENTIAL_TTL_SECONDS);
 }
 
-export async function getTemporaryZimbraCredential(campaignId: string) {
-  const payload = await getRedisClient().get(getCredentialKey(campaignId));
-
-  if (!payload) {
-    return null;
-  }
-
+function decryptCredential(payload: string) {
   const parsed = JSON.parse(payload) as {
     email: string;
     iv: string;
@@ -67,8 +60,44 @@ export async function getTemporaryZimbraCredential(campaignId: string) {
   };
 }
 
+export async function storeTemporaryZimbraCredential(input: {
+  campaignId: string;
+  email: string;
+  password: string;
+}) {
+  await getRedisClient().set(getCredentialKey(input.campaignId), encryptCredential(input), "EX", CREDENTIAL_TTL_SECONDS);
+}
+
+export async function getTemporaryZimbraCredential(campaignId: string) {
+  const payload = await getRedisClient().get(getCredentialKey(campaignId));
+
+  if (!payload) {
+    return null;
+  }
+
+  return decryptCredential(payload);
+}
+
 export async function deleteTemporaryZimbraCredential(campaignId: string) {
   await getRedisClient().del(getCredentialKey(campaignId));
+}
+
+export async function storeTemporaryLoginCredential(input: { email: string; password: string }) {
+  await getRedisClient().set(getUserCredentialKey(input.email), encryptCredential(input), "EX", CREDENTIAL_TTL_SECONDS);
+}
+
+export async function getTemporaryLoginCredential(email: string) {
+  const payload = await getRedisClient().get(getUserCredentialKey(email));
+
+  if (!payload) {
+    return null;
+  }
+
+  return decryptCredential(payload);
+}
+
+export async function deleteTemporaryLoginCredential(email: string) {
+  await getRedisClient().del(getUserCredentialKey(email));
 }
 
 export async function hasAutoBounceChecksScheduled(campaignId: string) {

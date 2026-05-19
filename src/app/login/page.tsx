@@ -29,7 +29,7 @@ export default function LoginPage() {
           </Card>
 
           <p className="mt-4 text-xs leading-5 text-muted-foreground">
-            O sistema não armazena sua senha. O remetente das campanhas será sempre o e-mail autenticado.
+            A senha não é gravada no banco; fica temporariamente criptografada para envio e bounces automáticos.
           </p>
         </div>
       </section>

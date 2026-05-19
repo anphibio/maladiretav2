@@ -3,7 +3,6 @@ import { Download, FileClock, KeyRound, MailWarning, ShieldCheck } from "lucide-
 import { AppShell } from "@/components/layout/app-shell";
 import { Card, CardContent, CardHeader } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
-import { BounceCheckForm } from "@/app/logs/bounce-check-form";
 import { logQuerySchema, type LogQuery } from "@/features/logs/schemas";
 import { requireCurrentUser } from "@/lib/auth/current-user";
 import { getLogSummary, listLogs } from "@/services/logs/log-service";
@@ -68,7 +67,6 @@ export default async function LogsPage({ searchParams }: { searchParams: SearchP
             <p className="mt-1 text-sm text-muted-foreground">Registros imutáveis de acesso, envio e auditoria.</p>
           </div>
           <div className="flex flex-wrap justify-end gap-2">
-            <BounceCheckForm />
             <a
               className="inline-flex h-10 items-center rounded-md bg-slate-100 px-3 text-sm font-medium text-slate-900 hover:bg-slate-200"
               href={buildReportQuery("audit", parsed.q)}

@@ -5,7 +5,7 @@ import { validateZimbraCredentials } from "@/services/zimbra/zimbra-service";
 import { enqueueCampaignRecipient } from "@/services/queue/email-queue";
 import { registerAuditLog } from "@/services/audit/audit-service";
 import { getSystemSettings } from "@/services/settings/settings-service";
-import { storeTemporaryZimbraCredential } from "@/services/zimbra/credential-vault";
+import { getTemporaryLoginCredential, storeTemporaryZimbraCredential } from "@/services/zimbra/credential-vault";
 import type { QueueCampaignInput, SendTestInput } from "@/features/campaigns/send-schemas";
 
 const ONE_HOUR_MS = 60 * 60 * 1000;
@@ -222,19 +222,22 @@ export async function prepareCampaignQueue(input: { campaignId: string; user: Us
   const dispatchEnabled = settings.queueDispatchEnabled && process.env.QUEUE_DISPATCH_ENABLED === "true";
 
   if (dispatchEnabled) {
-    if (!input.payload.password) {
-      throw new Error("Informe a senha do Zimbra para disparo automático da fila.");
+    const loginCredential = await getTemporaryLoginCredential(input.user.email);
+    const password = input.payload.password ?? loginCredential?.password;
+
+    if (!password) {
+      throw new Error("Faça login novamente para atualizar a credencial temporária antes do disparo automático.");
     }
 
     await validateZimbraCredentials({
       email: input.user.email,
-      password: input.payload.password
+      password
     });
 
     await storeTemporaryZimbraCredential({
       campaignId: campaign.id,
       email: input.user.email,
-      password: input.payload.password
+      password
     });
   }
 

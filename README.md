@@ -97,7 +97,7 @@ Campo usuário: joao.silva
 E-mail validado: joao.silva@tceal.tc.br
 ```
 
-Após autenticação válida, o sistema cria uma sessão local assinada em cookie `httpOnly` e registra logs de acesso e auditoria. A senha do Zimbra é usada apenas na tentativa de autenticação e não é armazenada.
+Após autenticação válida, o sistema cria uma sessão local assinada em cookie `httpOnly` e registra logs de acesso e auditoria. A senha do Zimbra não é gravada no PostgreSQL; ela fica temporariamente criptografada no Redis para envio e checagem automática de bounces.
 
 ## Campanhas
 
@@ -182,7 +182,7 @@ Por segurança, o disparo automático para o BullMQ fica desativado por padrão:
 QUEUE_DISPATCH_ENABLED="false"
 ```
 
-Quando essa opção estiver `true`, a preparação da fila exige a senha do Zimbra naquele momento. A senha é validada no Zimbra, criptografada com AES-GCM usando chave derivada de `SESSION_SECRET`, guardada temporariamente no Redis com expiração e usada pelo worker para os envios SMTP.
+Quando essa opção estiver `true`, a preparação da fila usa a credencial temporária validada no login. Se uma senha for informada novamente no formulário de envio, ela é revalidada no Zimbra e substitui a credencial temporária da campanha. A senha é criptografada com AES-GCM usando chave derivada de `SESSION_SECRET`, guardada temporariamente no Redis com expiração e usada pelo worker para os envios SMTP.
 
 A senha não é gravada no PostgreSQL nem em logs. Ao final dos jobs pendentes da campanha, a credencial temporária é removida do Redis.
 
@@ -196,9 +196,9 @@ Configure apenas a pasta IMAP a ser lida:
 BOUNCE_IMAP_MAILBOX="INBOX"
 ```
 
-Quando a campanha termina de enviar, o worker agenda automaticamente checagens IMAP usando a mesma credencial temporária validada para o disparo SMTP da campanha. Essas checagens rodam em segundo plano e atualizam os logs da campanha com status `BOUNCED` quando encontram retornos.
+Quando a campanha termina de enviar, o worker agenda automaticamente checagens IMAP usando a mesma credencial temporária validada no login ou no disparo SMTP da campanha. Essas checagens rodam em segundo plano e atualizam os logs da campanha com status `BOUNCED` quando encontram retornos.
 
-A guia Logs continua oferecendo o botão `Checar bounces` para conferência manual imediata. A senha do usuário autenticado é usada apenas naquela checagem, seguindo o mesmo princípio do disparo SMTP.
+A guia Logs não solicita senha IMAP nem oferece checagem manual. A rotina automática usa a credencial temporária da sessão e mantém a senha fora do PostgreSQL e dos logs.
 
 A rotina lê mensagens não vistas, detecta DSN/bounces, marca o destinatário como `Falhou`, registra `BOUNCED` nos logs de envio e reavalia o status da campanha.
 

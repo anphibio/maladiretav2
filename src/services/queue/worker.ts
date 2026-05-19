@@ -7,6 +7,7 @@ import { reconcileCampaignDeliveryStatus } from "@/services/campaigns/campaign-s
 import {
   deleteAutoBounceChecksScheduled,
   deleteTemporaryZimbraCredential,
+  getTemporaryLoginCredential,
   getTemporaryZimbraCredential,
   reserveAutoBounceChecksSchedule
 } from "@/services/zimbra/credential-vault";
@@ -181,7 +182,9 @@ new Worker<EmailQueueJob>(
 new Worker<BounceQueueJob>(
   BOUNCE_QUEUE_NAME,
   async (job) => {
-    const credential = await getTemporaryZimbraCredential(job.data.campaignId);
+    const credential =
+      (await getTemporaryZimbraCredential(job.data.campaignId)) ??
+      (await getTemporaryLoginCredential(job.data.senderEmail));
 
     if (!credential || credential.email !== job.data.senderEmail) {
       throw new Error("Credencial temporária indisponível para checar bounces da campanha.");

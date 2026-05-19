@@ -1,20 +1,28 @@
-import { NextRequest, NextResponse } from "next/server";
+import { NextResponse } from "next/server";
 import { requireCurrentUserForApi } from "@/lib/auth/current-user";
 import { processBounceMailbox } from "@/services/bounces/bounce-service";
+import { getTemporaryLoginCredential } from "@/services/zimbra/credential-vault";
 
-export async function POST(request: NextRequest) {
+export async function POST() {
   const { user, response } = await requireCurrentUserForApi();
 
   if (!user) {
     return response;
   }
 
-  const body = (await request.json().catch(() => null)) as { password?: string } | null;
-
   try {
+    const credential = await getTemporaryLoginCredential(user.email);
+
+    if (!credential || credential.email !== user.email) {
+      return NextResponse.json(
+        { message: "Faça login novamente para atualizar a credencial temporária de bounces." },
+        { status: 401 }
+      );
+    }
+
     const results = await processBounceMailbox({
-      email: user.email,
-      password: body?.password ?? ""
+      email: credential.email,
+      password: credential.password
     });
 
     return NextResponse.json({

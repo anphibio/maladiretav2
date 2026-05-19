@@ -9,7 +9,7 @@ export async function POST(request: NextRequest) {
   }
 
   return NextResponse.json(
-    { message: "A checagem de bounces exige a senha do usuário logado. Use POST /api/bounces pela aplicação." },
+    { message: "A checagem de bounces é automática após o envio das campanhas pelo worker." },
     { status: 400 }
   );
 }

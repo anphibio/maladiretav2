@@ -282,13 +282,13 @@ export function NewCampaignForm({ senderEmail }: { senderEmail: string }) {
               <Input
                 className="mt-2"
                 name="queuePassword"
-                placeholder="Obrigatória se o disparo automático estiver ativo"
+                placeholder="Opcional: a sessão atual será usada se ficar em branco"
                 type="password"
               />
             </label>
           </div>
           <p className="mt-2 text-sm text-muted-foreground">
-            Use “Agendar” para salvar com data futura. A senha só é usada quando houver disparo automático e não é armazenada no banco.
+            Use “Agendar” para salvar com data futura. O disparo automático usa a credencial temporária do login quando disponível.
           </p>
         </section>
 

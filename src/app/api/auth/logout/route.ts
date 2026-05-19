@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { AuditAction } from "@prisma/client";
 import { clearSessionCookie, getCurrentSession } from "@/lib/auth/session";
 import { registerAccessLog, registerAuditLog } from "@/services/audit/audit-service";
+import { deleteTemporaryLoginCredential } from "@/services/zimbra/credential-vault";
 
 function getClientIp(request: NextRequest): string | undefined {
   return request.headers.get("x-forwarded-for")?.split(",")[0]?.trim() ?? request.headers.get("x-real-ip") ?? undefined;
@@ -29,6 +30,8 @@ export async function POST(request: NextRequest) {
       ip,
       userAgent
     });
+
+    await deleteTemporaryLoginCredential(session.email);
   }
 
   await clearSessionCookie();

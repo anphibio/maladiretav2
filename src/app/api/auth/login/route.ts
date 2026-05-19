@@ -6,6 +6,7 @@ import { setSessionCookie } from "@/lib/auth/session";
 import { prisma } from "@/lib/prisma/client";
 import { checkMemoryRateLimit } from "@/lib/security/rate-limit";
 import { registerAccessLog, registerAuditLog } from "@/services/audit/audit-service";
+import { storeTemporaryLoginCredential } from "@/services/zimbra/credential-vault";
 import { validateZimbraCredentials } from "@/services/zimbra/zimbra-service";
 
 function getClientIp(request: NextRequest): string | undefined {
@@ -80,6 +81,11 @@ export async function POST(request: NextRequest) {
       action: AuditAction.LOGIN_SUCCESS,
       ip,
       userAgent
+    });
+
+    await storeTemporaryLoginCredential({
+      email: user.email,
+      password: parsed.data.password
     });
 
     await setSessionCookie({
