@@ -3,6 +3,7 @@ import { getRedisClient } from "@/lib/redis/client";
 
 export const EMAIL_QUEUE_NAME = "campaign-email";
 export const BOUNCE_QUEUE_NAME = "campaign-bounce";
+export const API_EMAIL_QUEUE_NAME = "api-email";
 
 export type EmailQueueJob = {
   emailJobId: string;
@@ -18,6 +19,10 @@ export type BounceQueueJob = {
   totalChecks: number;
 };
 
+export type ApiEmailQueueJob = {
+  apiEmailTaskId: string;
+};
+
 export function getEmailQueue() {
   return new Queue<EmailQueueJob>(EMAIL_QUEUE_NAME, {
     connection: getRedisClient()
@@ -26,6 +31,12 @@ export function getEmailQueue() {
 
 export function getBounceQueue() {
   return new Queue<BounceQueueJob>(BOUNCE_QUEUE_NAME, {
+    connection: getRedisClient()
+  });
+}
+
+export function getApiEmailQueue() {
+  return new Queue<ApiEmailQueueJob>(API_EMAIL_QUEUE_NAME, {
     connection: getRedisClient()
   });
 }
@@ -58,6 +69,22 @@ export async function enqueueBounceCheck(job: BounceQueueJob, delayMs = 0): Prom
     removeOnComplete: 1000,
     removeOnFail: 5000,
     jobId: `${job.campaignId}:bounce:${job.checkNumber}`
+  });
+
+  return queued.id ?? "";
+}
+
+export async function enqueueApiEmail(job: ApiEmailQueueJob, delayMs = 0): Promise<string> {
+  const queue = getApiEmailQueue();
+  const queued = await queue.add("send-api-email", job, {
+    delay: delayMs,
+    attempts: 3,
+    backoff: {
+      type: "exponential",
+      delay: 30000
+    },
+    removeOnComplete: 1000,
+    removeOnFail: 5000
   });
 
   return queued.id ?? "";

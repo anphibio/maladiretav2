@@ -22,6 +22,7 @@ const envSchema = z.object({
   BOUNCE_IMAP_MAILBOX: z.string().default("INBOX"),
   SESSION_SECRET: z.string().min(16),
   JWT_SECRET: z.string().min(16),
+  CREDENTIAL_ENCRYPTION_SECRET: z.string().min(16).optional(),
   DEFAULT_MIN_EMAIL_DELAY_MS: z.coerce.number().int().nonnegative().default(20000),
   DEFAULT_MAX_EMAIL_DELAY_MS: z.coerce.number().int().nonnegative().default(45000),
   DEFAULT_PAUSE_EVERY_EMAILS: z.coerce.number().int().positive().default(25),

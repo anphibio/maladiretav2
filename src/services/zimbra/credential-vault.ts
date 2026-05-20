@@ -1,18 +1,8 @@
-import { createCipheriv, createDecipheriv, createHash, randomBytes } from "crypto";
 import { getRedisClient } from "@/lib/redis/client";
+import { decryptSecret, encryptSecret } from "@/lib/security/credential-encryption";
 
 const CREDENTIAL_TTL_SECONDS = 60 * 60 * 8;
 const AUTO_BOUNCE_CHECKS_KEY_PREFIX = "zimbra:campaign-bounce-checks:";
-
-function getEncryptionKey(): Buffer {
-  const secret = process.env.SESSION_SECRET;
-
-  if (!secret || secret.length < 16) {
-    throw new Error("SESSION_SECRET precisa ter pelo menos 16 caracteres para proteger credenciais temporárias.");
-  }
-
-  return createHash("sha256").update(secret).digest();
-}
 
 function getCredentialKey(campaignId: string): string {
   return `zimbra:campaign-credential:${campaignId}`;
@@ -27,32 +17,29 @@ function getBounceChecksKey(campaignId: string): string {
 }
 
 function encryptCredential(input: { email: string; password: string }): string {
-  const iv = randomBytes(12);
-  const cipher = createCipheriv("aes-256-gcm", getEncryptionKey(), iv);
-  const encrypted = Buffer.concat([cipher.update(input.password, "utf8"), cipher.final()]);
-  const authTag = cipher.getAuthTag();
-
   return JSON.stringify({
     email: input.email,
-    iv: iv.toString("base64url"),
-    authTag: authTag.toString("base64url"),
-    encrypted: encrypted.toString("base64url")
+    encryptedPassword: encryptSecret(input.password)
   });
 }
 
 function decryptCredential(payload: string) {
   const parsed = JSON.parse(payload) as {
     email: string;
-    iv: string;
-    authTag: string;
-    encrypted: string;
+    encryptedPassword?: string;
+    iv?: string;
+    authTag?: string;
+    encrypted?: string;
   };
-  const decipher = createDecipheriv("aes-256-gcm", getEncryptionKey(), Buffer.from(parsed.iv, "base64url"));
-  decipher.setAuthTag(Buffer.from(parsed.authTag, "base64url"));
-  const password = Buffer.concat([
-    decipher.update(Buffer.from(parsed.encrypted, "base64url")),
-    decipher.final()
-  ]).toString("utf8");
+  const password = parsed.encryptedPassword
+    ? decryptSecret(parsed.encryptedPassword)
+    : decryptSecret(
+        JSON.stringify({
+          iv: parsed.iv,
+          authTag: parsed.authTag,
+          encrypted: parsed.encrypted
+        })
+      );
 
   return {
     email: parsed.email,

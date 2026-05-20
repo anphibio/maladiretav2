@@ -1,7 +1,16 @@
 import { Worker } from "bullmq";
 import { prisma } from "@/lib/prisma/client";
 import { getRedisClient } from "@/lib/redis/client";
-import { BOUNCE_QUEUE_NAME, EMAIL_QUEUE_NAME, enqueueBounceCheck, type BounceQueueJob, type EmailQueueJob } from "@/services/queue/email-queue";
+import {
+  API_EMAIL_QUEUE_NAME,
+  BOUNCE_QUEUE_NAME,
+  EMAIL_QUEUE_NAME,
+  enqueueBounceCheck,
+  type ApiEmailQueueJob,
+  type BounceQueueJob,
+  type EmailQueueJob
+} from "@/services/queue/email-queue";
+import { decryptApplicationCredential } from "@/services/api-email/api-application-service";
 import { processBounceMailbox } from "@/services/bounces/bounce-service";
 import { reconcileCampaignDeliveryStatus } from "@/services/campaigns/campaign-service";
 import {
@@ -169,6 +178,82 @@ new Worker<EmailQueueJob>(
           await ensureAutomaticBounceChecks(recipient.campaignId, job.data.senderEmail);
         }
       }
+
+      throw error;
+    }
+  },
+  {
+    connection: getRedisClient(),
+    concurrency: 3
+  }
+);
+
+new Worker<ApiEmailQueueJob>(
+  API_EMAIL_QUEUE_NAME,
+  async (job) => {
+    const task = await prisma.apiEmailTask.findUnique({
+      where: { id: job.data.apiEmailTaskId },
+      include: {
+        application: true
+      }
+    });
+
+    if (!task) {
+      throw new Error("Tarefa de e-mail via API não encontrada.");
+    }
+
+    if (!task.application.isActive) {
+      throw new Error("Aplicação inativa.");
+    }
+
+    await prisma.apiEmailTask.update({
+      where: { id: task.id },
+      data: {
+        status: "SENDING",
+        attempts: { increment: 1 }
+      }
+    });
+
+    try {
+      const password = decryptApplicationCredential(task.application);
+
+      if (!password) {
+        throw new Error("Credencial protegida da aplicação não configurada.");
+      }
+
+      const result = await sendZimbraEmail({
+        email: task.senderEmail,
+        password,
+        to: task.toEmail,
+        subject: task.subject,
+        html: task.htmlBody,
+        text: task.textBody
+      });
+
+      await prisma.apiEmailTask.update({
+        where: { id: task.id },
+        data: {
+          status: "SENT",
+          smtpResponse: result.response,
+          lastError: null,
+          sentAt: new Date()
+        }
+      });
+
+      return { sent: true };
+    } catch (error) {
+      const attemptsUsed = job.attemptsMade + 1;
+      const maxAttempts = typeof job.opts.attempts === "number" ? job.opts.attempts : 1;
+      const finalAttempt = attemptsUsed >= maxAttempts;
+      const message = error instanceof Error ? error.message : "Erro desconhecido no envio via API.";
+
+      await prisma.apiEmailTask.update({
+        where: { id: task.id },
+        data: {
+          status: finalAttempt ? "FAILED" : "QUEUED",
+          lastError: message
+        }
+      });
 
       throw error;
     }

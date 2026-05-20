@@ -120,6 +120,7 @@ ZIMBRA_SMTP_HOST="smtp.tceal.tc.br"
 ZIMBRA_IMAP_HOST="smtp.tceal.tc.br"
 SESSION_SECRET="troque-por-um-valor-longo-e-aleatorio"
 JWT_SECRET="troque-por-outro-valor-longo-e-aleatorio"
+CREDENTIAL_ENCRYPTION_SECRET="troque-por-um-segredo-longo-para-credenciais"
 QUEUE_DISPATCH_ENABLED="true"
 BOOTSTRAP_ADMIN_EMAILS="seu.usuario@tceal.tc.br"
 ```
@@ -167,6 +168,69 @@ Sem o container `worker`, campanhas podem ficar aguardando envio e bounces não 
 - `/logs`: auditoria e eventos
 - `/settings`: limites e parâmetros operacionais
 - `/api/health`: verificação simples da aplicação
+
+## API externa para envio de e-mails
+
+Administradores podem criar aplicações externas em `/admin`. Cada aplicação possui:
+
+- nome e descrição;
+- remetente institucional próprio;
+- senha do Zimbra validada e armazenada criptografada;
+- tokens `AppToken` revogáveis.
+
+O token completo aparece apenas no momento da geração. O banco armazena somente o hash do token e um prefixo para identificação.
+
+As rotas versionadas ficam em `/api/v1` e usam:
+
+```txt
+Authorization: AppToken app_xxxxxxxxx
+```
+
+Enviar um e-mail:
+
+```bash
+curl -X POST "$APP_URL/api/v1/emails/send" \
+  -H "Authorization: AppToken app_xxxxxxxxx" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "toEmail": "destinatario@exemplo.com",
+    "subject": "Comunicado",
+    "body": "Mensagem enviada por sistema externo",
+    "externalReferenceId": "sistema-123"
+  }'
+```
+
+Enviar em lote:
+
+```json
+[
+  {
+    "toEmail": "a@exemplo.com",
+    "subject": "Comunicado",
+    "htmlBody": "<p>Mensagem A</p>",
+    "textBody": "Mensagem A"
+  },
+  {
+    "toEmail": "b@exemplo.com",
+    "subject": "Comunicado",
+    "body": "Mensagem B"
+  }
+]
+```
+
+Consultar a fila da aplicação autenticada:
+
+```txt
+GET /api/v1/emails/queue?page=1&pageSize=50
+```
+
+Consultar status:
+
+```txt
+GET /api/v1/emails/status/{id}
+```
+
+Os envios via API usam uma fila BullMQ separada (`api-email`) e respeitam os limites globais configurados em `/settings`: delay mínimo, delay máximo, pausa periódica e limite por hora. O worker precisa estar ativo para disparar os e-mails.
 
 ## Login institucional
 

@@ -1,9 +1,12 @@
-import { ShieldCheck, SlidersHorizontal, Users } from "lucide-react";
+import { Mail, PlugZap, ShieldCheck, SlidersHorizontal, Users } from "lucide-react";
 import { AppShell } from "@/components/layout/app-shell";
 import { Card, CardContent, CardHeader } from "@/components/ui/card";
+import { ApplicationManagement } from "@/app/admin/application-management";
 import { DomainRateLimitForm } from "@/app/admin/domain-rate-limit-form";
 import { UserManagementTable } from "@/app/admin/user-management-table";
 import { requireCurrentUser } from "@/lib/auth/current-user";
+import { listApplicationsForAdmin } from "@/services/api-email/api-application-service";
+import { listRecentApiEmailTasks } from "@/services/api-email/api-email-service";
 import { listDomainRateLimits } from "@/services/admin/domain-rate-limit-service";
 import { getQueueStatusSummary } from "@/services/admin/queue-status-service";
 import { listManagedUsers } from "@/services/admin/user-admin-service";
@@ -32,10 +35,12 @@ export default async function AdminPage() {
     );
   }
 
-  const [limits, queueStatus, users] = await Promise.all([
+  const [limits, queueStatus, users, applications, apiEmailTasks] = await Promise.all([
     listDomainRateLimits(),
     getQueueStatusSummary(),
-    listManagedUsers()
+    listManagedUsers(),
+    listApplicationsForAdmin(),
+    listRecentApiEmailTasks()
   ]);
   const metrics = [
     { title: "Jobs aguardando", value: queueStatus.waiting, icon: SlidersHorizontal },
@@ -66,6 +71,87 @@ export default async function AdminPage() {
         })}
       </div>
       <Card>
+        <CardHeader>
+          <div className="flex items-center gap-2">
+            <PlugZap className="h-4 w-4 text-teal-700" />
+            <div>
+              <h2 className="text-base font-semibold text-slate-950">Aplicações externas</h2>
+              <p className="mt-1 text-sm text-muted-foreground">
+                Gerencie sistemas autorizados, tokens e credenciais protegidas por aplicação.
+              </p>
+            </div>
+          </div>
+        </CardHeader>
+        <CardContent>
+          <ApplicationManagement
+            applications={applications.map((application) => ({
+              id: application.id,
+              name: application.name,
+              description: application.description,
+              senderEmail: application.senderEmail,
+              encryptedPassword: application.encryptedPassword,
+              isActive: application.isActive,
+              tokens: application.tokens.map((token) => ({
+                id: token.id,
+                tokenPrefix: token.tokenPrefix,
+                revokedAt: token.revokedAt,
+                lastUsedAt: token.lastUsedAt,
+                createdAt: token.createdAt
+              })),
+              _count: application._count
+            }))}
+          />
+        </CardContent>
+      </Card>
+      <Card className="mt-6">
+        <CardHeader>
+          <div className="flex items-center gap-2">
+            <Mail className="h-4 w-4 text-teal-700" />
+            <div>
+              <h2 className="text-base font-semibold text-slate-950">Últimos envios via API</h2>
+              <p className="mt-1 text-sm text-muted-foreground">Leitura operacional das tarefas criadas por aplicações externas.</p>
+            </div>
+          </div>
+        </CardHeader>
+        <CardContent className="p-0">
+          <div className="overflow-x-auto">
+            <table className="w-full min-w-[900px] text-left text-sm">
+              <thead className="border-b border-border bg-slate-50 text-xs uppercase text-muted-foreground">
+                <tr>
+                  <th className="px-5 py-3">Aplicação</th>
+                  <th className="px-5 py-3">Destinatário</th>
+                  <th className="px-5 py-3">Status</th>
+                  <th className="px-5 py-3">Referência</th>
+                  <th className="px-5 py-3">Erro</th>
+                </tr>
+              </thead>
+              <tbody>
+                {apiEmailTasks.length === 0 ? (
+                  <tr>
+                    <td className="px-5 py-8 text-center text-muted-foreground" colSpan={5}>
+                      Nenhum envio via API registrado.
+                    </td>
+                  </tr>
+                ) : null}
+                {apiEmailTasks.map((task) => (
+                  <tr key={task.id} className="border-b border-border last:border-0">
+                    <td className="px-5 py-4 font-medium text-slate-900">{task.application.name}</td>
+                    <td className="px-5 py-4 text-muted-foreground">{task.toEmail}</td>
+                    <td className="px-5 py-4 text-muted-foreground">{task.status}</td>
+                    <td className="px-5 py-4 text-muted-foreground">{task.externalReferenceId ?? "-"}</td>
+                    <td className="max-w-xs px-5 py-4 text-muted-foreground">
+                      <span className="line-clamp-2" title={task.lastError ?? undefined}>
+                        {task.lastError ?? "-"}
+                      </span>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        </CardContent>
+      </Card>
+      <Card className="mt-6">
         <CardHeader>
           <h2 className="text-base font-semibold text-slate-950">Limites por domínio</h2>
           <p className="mt-1 text-sm text-muted-foreground">Atualize ou crie regras de envio. O delay é informado em segundos.</p>

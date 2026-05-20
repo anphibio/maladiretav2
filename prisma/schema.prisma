@@ -57,6 +57,13 @@ enum AuditAction {
   EMAIL_SEND_FAILURE
 }
 
+enum ApiEmailTaskStatus {
+  QUEUED
+  SENDING
+  SENT
+  FAILED
+}
+
 model User {
   id          String    @id @default(cuid())
   name        String?
@@ -70,16 +77,76 @@ model User {
   campaigns  Campaign[]
   accessLogs AccessLog[]
   auditLogs  AuditLog[]
-  roles       UserRoleMap[]
+  roles      UserRoleMap[]
 
   @@map("users")
 }
 
+model Application {
+  id                String   @id @default(cuid())
+  name              String
+  description       String?
+  senderEmail       String
+  encryptedPassword String?
+  isActive          Boolean  @default(true)
+  createdAt         DateTime @default(now())
+  updatedAt         DateTime @updatedAt
+
+  tokens     ApiToken[]
+  emailTasks ApiEmailTask[]
+
+  @@index([isActive])
+  @@map("applications")
+}
+
+model ApiToken {
+  id            String    @id @default(cuid())
+  applicationId String
+  tokenHash     String    @unique
+  tokenPrefix   String
+  revokedAt     DateTime?
+  lastUsedAt    DateTime?
+  createdAt     DateTime  @default(now())
+
+  application Application @relation(fields: [applicationId], references: [id])
+
+  @@index([applicationId])
+  @@index([tokenPrefix])
+  @@map("api_tokens")
+}
+
+model ApiEmailTask {
+  id                  String             @id @default(cuid())
+  applicationId       String
+  toEmail             String
+  subject             String
+  htmlBody            String
+  textBody            String
+  status              ApiEmailTaskStatus @default(QUEUED)
+  externalReferenceId String?
+  senderEmail         String
+  queueJobId          String?
+  attempts            Int                @default(0)
+  lastError           String?
+  smtpResponse        String?
+  scheduledAt         DateTime?
+  sentAt              DateTime?
+  createdAt           DateTime           @default(now())
+  updatedAt           DateTime           @updatedAt
+
+  application Application @relation(fields: [applicationId], references: [id])
+
+  @@index([applicationId, status])
+  @@index([externalReferenceId])
+  @@index([createdAt])
+  @@map("api_email_tasks")
+}
+
 model Role {
-  id          String     @id @default(cuid())
-  name        UserRole   @unique
+  id          String        @id @default(cuid())
+  name        UserRole      @unique
   description String?
-  createdAt   DateTime   @default(now())
+  createdAt   DateTime      @default(now())
   users       UserRoleMap[]
 
   @@map("roles")
@@ -99,26 +166,26 @@ model UserRoleMap {
 }
 
 model Campaign {
-  id           String         @id @default(cuid())
-  name         String
-  subject      String
-  htmlBody     String
-  textBody     String
-  senderEmail  String
-  ownerUserId  String
-  status       CampaignStatus @default(DRAFT)
-  scheduledAt  DateTime?
-  startedAt    DateTime?
-  finishedAt   DateTime?
-  createdAt    DateTime       @default(now())
-  updatedAt    DateTime       @updatedAt
+  id          String         @id @default(cuid())
+  name        String
+  subject     String
+  htmlBody    String
+  textBody    String
+  senderEmail String
+  ownerUserId String
+  status      CampaignStatus @default(DRAFT)
+  scheduledAt DateTime?
+  startedAt   DateTime?
+  finishedAt  DateTime?
+  createdAt   DateTime       @default(now())
+  updatedAt   DateTime       @updatedAt
 
-  owner       User                @relation(fields: [ownerUserId], references: [id])
-  recipients  CampaignRecipient[]
-  emailJobs   EmailJob[]
-  emailLogs   EmailLog[]
+  owner         User                 @relation(fields: [ownerUserId], references: [id])
+  recipients    CampaignRecipient[]
+  emailJobs     EmailJob[]
+  emailLogs     EmailLog[]
   importBatches ImportBatch[]
-  attachments CampaignAttachment[]
+  attachments   CampaignAttachment[]
 
   @@index([ownerUserId])
   @@index([status])
@@ -141,25 +208,25 @@ model CampaignAttachment {
 }
 
 model CampaignRecipient {
-  id          String          @id @default(cuid())
-  campaignId  String
-  email       String
-  name        String?
-  cpf         String?
-  setor       String?
-  cargo       String?
-  orgao       String?
-  cidade      String?
-  estado      String?
-  tags        String[]
-  domain      String
-  status      RecipientStatus @default(PENDING)
+  id           String          @id @default(cuid())
+  campaignId   String
+  email        String
+  name         String?
+  cpf          String?
+  setor        String?
+  cargo        String?
+  orgao        String?
+  cidade       String?
+  estado       String?
+  tags         String[]
+  domain       String
+  status       RecipientStatus @default(PENDING)
   errorMessage String?
-  sentAt      DateTime?
-  createdAt   DateTime        @default(now())
-  updatedAt   DateTime        @updatedAt
+  sentAt       DateTime?
+  createdAt    DateTime        @default(now())
+  updatedAt    DateTime        @updatedAt
 
-  campaign Campaign @relation(fields: [campaignId], references: [id])
+  campaign  Campaign   @relation(fields: [campaignId], references: [id])
   emailJobs EmailJob[]
 
   @@unique([campaignId, email])
@@ -188,16 +255,16 @@ model EmailJob {
 }
 
 model EmailLog {
-  id             String   @id @default(cuid())
+  id             String    @id @default(cuid())
   campaignId     String
   recipientEmail String
   senderEmail    String
   status         String
   smtpResponse   String?
   errorMessage   String?
-  attempts       Int      @default(0)
+  attempts       Int       @default(0)
   sentAt         DateTime?
-  createdAt      DateTime @default(now())
+  createdAt      DateTime  @default(now())
 
   campaign Campaign @relation(fields: [campaignId], references: [id])
 
@@ -254,28 +321,28 @@ model Setting {
 }
 
 model DomainRateLimit {
-  id               String   @id @default(cuid())
-  domain           String   @unique
+  id                String   @id @default(cuid())
+  domain            String   @unique
   messagesPerMinute Int
-  delayMs          Int
-  active           Boolean  @default(true)
-  createdAt        DateTime @default(now())
-  updatedAt        DateTime @updatedAt
+  delayMs           Int
+  active            Boolean  @default(true)
+  createdAt         DateTime @default(now())
+  updatedAt         DateTime @updatedAt
 
   @@map("domain_rate_limits")
 }
 
 model ImportBatch {
   id                String   @id @default(cuid())
-  campaignId         String
-  filename           String
-  totalRows          Int
-  validRows          Int
-  invalidRows        Int
-  duplicatesRemoved  Int
-  createdAt          DateTime @default(now())
+  campaignId        String
+  filename          String
+  totalRows         Int
+  validRows         Int
+  invalidRows       Int
+  duplicatesRemoved Int
+  createdAt         DateTime @default(now())
 
-  campaign Campaign @relation(fields: [campaignId], references: [id])
+  campaign Campaign      @relation(fields: [campaignId], references: [id])
   errors   ImportError[]
 
   @@map("import_batches")
