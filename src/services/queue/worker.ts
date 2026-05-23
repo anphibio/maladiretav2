@@ -1,4 +1,5 @@
 import { Worker } from "bullmq";
+import { ApiEmailTaskStatus } from "@prisma/client";
 import { prisma } from "@/lib/prisma/client";
 import { getRedisClient } from "@/lib/redis/client";
 import {
@@ -11,13 +12,16 @@ import {
   type EmailQueueJob
 } from "@/services/queue/email-queue";
 import { decryptApplicationCredential } from "@/services/api-email/api-application-service";
+import { registerApiEmailEvent } from "@/services/api-email/api-email-service";
 import { processBounceMailbox } from "@/services/bounces/bounce-service";
 import { reconcileCampaignDeliveryStatus } from "@/services/campaigns/campaign-service";
 import {
   deleteAutoBounceChecksScheduled,
+  deleteAutoApiBounceChecksScheduled,
   deleteTemporaryZimbraCredential,
   getTemporaryLoginCredential,
   getTemporaryZimbraCredential,
+  reserveAutoApiBounceChecksSchedule,
   reserveAutoBounceChecksSchedule
 } from "@/services/zimbra/credential-vault";
 import { sendZimbraEmail } from "@/services/zimbra/zimbra-service";
@@ -45,6 +49,28 @@ async function ensureAutomaticBounceChecks(campaignId: string, senderEmail: stri
       enqueueBounceCheck(
         {
           campaignId,
+          senderEmail,
+          checkNumber: index + 1,
+          totalChecks: AUTO_BOUNCE_CHECK_DELAYS_MS.length
+        },
+        delayMs
+      )
+    )
+  );
+}
+
+async function ensureAutomaticApiBounceChecks(applicationId: string, senderEmail: string) {
+  const reserved = await reserveAutoApiBounceChecksSchedule(applicationId);
+
+  if (!reserved) {
+    return;
+  }
+
+  await Promise.all(
+    AUTO_BOUNCE_CHECK_DELAYS_MS.map((delayMs, index) =>
+      enqueueBounceCheck(
+        {
+          applicationId,
           senderEmail,
           checkNumber: index + 1,
           totalChecks: AUTO_BOUNCE_CHECK_DELAYS_MS.length
@@ -213,6 +239,16 @@ new Worker<ApiEmailQueueJob>(
         attempts: { increment: 1 }
       }
     });
+    await registerApiEmailEvent(prisma, {
+      applicationId: task.applicationId,
+      taskId: task.id,
+      recipientEmail: task.toEmail,
+      senderEmail: task.senderEmail,
+      status: ApiEmailTaskStatus.SENDING,
+      externalReferenceId: task.externalReferenceId,
+      attempts: task.attempts + 1,
+      message: "Worker iniciou o envio via API."
+    });
 
     try {
       const password = decryptApplicationCredential(task.application);
@@ -227,18 +263,37 @@ new Worker<ApiEmailQueueJob>(
         to: task.toEmail,
         subject: task.subject,
         html: task.htmlBody,
-        text: task.textBody
+        text: task.textBody,
+        apiEmailTaskId: task.id,
+        externalReferenceId: task.externalReferenceId ?? undefined
       });
 
-      await prisma.apiEmailTask.update({
-        where: { id: task.id },
-        data: {
-          status: "SENT",
+      await prisma.$transaction(async (tx) => {
+        const sentAt = new Date();
+        const updated = await tx.apiEmailTask.update({
+          where: { id: task.id },
+          data: {
+            status: ApiEmailTaskStatus.SENT,
+            smtpResponse: result.response,
+            lastError: null,
+            sentAt
+          }
+        });
+
+        await registerApiEmailEvent(tx, {
+          applicationId: updated.applicationId,
+          taskId: updated.id,
+          recipientEmail: updated.toEmail,
+          senderEmail: updated.senderEmail,
+          status: ApiEmailTaskStatus.SENT,
+          externalReferenceId: updated.externalReferenceId,
           smtpResponse: result.response,
-          lastError: null,
-          sentAt: new Date()
-        }
+          attempts: updated.attempts,
+          message: "E-mail entregue ao servidor SMTP."
+        });
       });
+
+      await ensureAutomaticApiBounceChecks(task.applicationId, task.senderEmail);
 
       return { sent: true };
     } catch (error) {
@@ -247,12 +302,25 @@ new Worker<ApiEmailQueueJob>(
       const finalAttempt = attemptsUsed >= maxAttempts;
       const message = error instanceof Error ? error.message : "Erro desconhecido no envio via API.";
 
-      await prisma.apiEmailTask.update({
-        where: { id: task.id },
-        data: {
-          status: finalAttempt ? "FAILED" : "QUEUED",
-          lastError: message
-        }
+      await prisma.$transaction(async (tx) => {
+        const updated = await tx.apiEmailTask.update({
+          where: { id: task.id },
+          data: {
+            status: finalAttempt ? ApiEmailTaskStatus.FAILED : ApiEmailTaskStatus.QUEUED,
+            lastError: message
+          }
+        });
+
+        await registerApiEmailEvent(tx, {
+          applicationId: updated.applicationId,
+          taskId: updated.id,
+          recipientEmail: updated.toEmail,
+          senderEmail: updated.senderEmail,
+          status: finalAttempt ? ApiEmailTaskStatus.FAILED : ApiEmailTaskStatus.QUEUED,
+          externalReferenceId: updated.externalReferenceId,
+          message,
+          attempts: attemptsUsed
+        });
       });
 
       throw error;
@@ -267,12 +335,22 @@ new Worker<ApiEmailQueueJob>(
 new Worker<BounceQueueJob>(
   BOUNCE_QUEUE_NAME,
   async (job) => {
-    const credential =
-      (await getTemporaryZimbraCredential(job.data.campaignId)) ??
-      (await getTemporaryLoginCredential(job.data.senderEmail));
+    const application = job.data.applicationId
+      ? await prisma.application.findUnique({ where: { id: job.data.applicationId } })
+      : null;
+    const applicationPassword = application ? decryptApplicationCredential(application) : null;
+    const credential = applicationPassword
+      ? {
+          email: application?.senderEmail ?? job.data.senderEmail,
+          password: applicationPassword
+        }
+      : job.data.campaignId
+        ? ((await getTemporaryZimbraCredential(job.data.campaignId)) ??
+          (await getTemporaryLoginCredential(job.data.senderEmail)))
+        : await getTemporaryLoginCredential(job.data.senderEmail);
 
     if (!credential || credential.email !== job.data.senderEmail) {
-      throw new Error("Credencial temporária indisponível para checar bounces da campanha.");
+      throw new Error("Credencial indisponível para checar bounces.");
     }
 
     const results = await processBounceMailbox({
@@ -280,9 +358,13 @@ new Worker<BounceQueueJob>(
       password: credential.password
     });
 
-    if (job.data.checkNumber >= job.data.totalChecks) {
+    if (job.data.checkNumber >= job.data.totalChecks && job.data.campaignId) {
       await deleteAutoBounceChecksScheduled(job.data.campaignId);
       await deleteTemporaryZimbraCredential(job.data.campaignId);
+    }
+
+    if (job.data.checkNumber >= job.data.totalChecks && job.data.applicationId) {
+      await deleteAutoApiBounceChecksScheduled(job.data.applicationId);
     }
 
     return {

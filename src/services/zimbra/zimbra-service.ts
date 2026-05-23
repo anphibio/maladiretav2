@@ -13,6 +13,8 @@ export type ZimbraSendInput = ZimbraCredentials & {
   text: string;
   campaignId?: string;
   recipientId?: string;
+  apiEmailTaskId?: string;
+  externalReferenceId?: string;
   attachments?: Array<{
     filename: string;
     contentType: string;
@@ -62,7 +64,9 @@ export async function sendZimbraEmail(input: ZimbraSendInput) {
     text: input.text,
     headers: {
       ...(input.campaignId ? { "X-Campaign-Id": input.campaignId } : {}),
-      ...(input.recipientId ? { "X-Recipient-Id": input.recipientId } : {})
+      ...(input.recipientId ? { "X-Recipient-Id": input.recipientId } : {}),
+      ...(input.apiEmailTaskId ? { "X-Api-Email-Task-Id": input.apiEmailTaskId } : {}),
+      ...(input.externalReferenceId ? { "X-External-Reference-Id": input.externalReferenceId } : {})
     },
     attachments: input.attachments?.map((attachment) => ({
       filename: attachment.filename,

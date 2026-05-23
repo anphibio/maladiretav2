@@ -8,7 +8,7 @@ export async function getQueueStatusSummary() {
     prisma.emailJob.count({ where: { status: "FAILED" } }),
     prisma.apiEmailTask.count({ where: { status: "QUEUED" } }),
     prisma.apiEmailTask.count({ where: { status: "SENDING" } }),
-    prisma.apiEmailTask.count({ where: { status: "FAILED" } }),
+    prisma.apiEmailTask.count({ where: { status: { in: ["FAILED", "BOUNCED"] } } }),
     prisma.campaign.count({ where: { status: "QUEUED" } }),
     prisma.campaign.count({ where: { status: "SENDING" } })
   ]);

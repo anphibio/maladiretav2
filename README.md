@@ -230,7 +230,18 @@ Consultar status:
 GET /api/v1/emails/status/{id}
 ```
 
+O status também retorna os eventos recentes da tarefa. Os estados possíveis são `QUEUED`, `SENDING`, `SENT`, `FAILED` e `BOUNCED`.
+
 Os envios via API usam uma fila BullMQ separada (`api-email`) e respeitam os limites globais configurados em `/settings`: delay mínimo, delay máximo, pausa periódica e limite por hora. O worker precisa estar ativo para disparar os e-mails.
+
+A área administrativa mostra os logs das aplicações externas com filtros por aplicação, status e busca textual. Esses logs registram criação na fila, início de envio, entrega SMTP, falhas e bounces.
+
+Para manter o banco enxuto, os logs e tarefas da API externa têm retenção de 30 dias. Configure um agendamento diário chamando:
+
+```txt
+POST /api/cron/api-email-retention
+Header: x-cron-secret: valor-do-CRON_SECRET
+```
 
 ## Login institucional
 
@@ -334,7 +345,7 @@ A senha não é gravada no PostgreSQL nem em logs. Ao final dos jobs pendentes d
 
 ## Checagem de bounces
 
-O sistema marca falhas posteriores ao envio quando recebe mensagens de retorno na caixa do usuário logado. Cada e-mail enviado pela fila recebe os cabeçalhos `X-Campaign-Id` e `X-Recipient-Id`, permitindo vincular o retorno ao destinatário correto.
+O sistema marca falhas posteriores ao envio quando recebe mensagens de retorno na caixa do usuário logado ou no remetente de uma aplicação externa. Cada e-mail enviado pela fila de campanha recebe os cabeçalhos `X-Campaign-Id` e `X-Recipient-Id`; cada e-mail enviado pela API externa recebe `X-Api-Email-Task-Id` e, quando informado, `X-External-Reference-Id`.
 
 Configure apenas a pasta IMAP a ser lida:
 
@@ -342,11 +353,11 @@ Configure apenas a pasta IMAP a ser lida:
 BOUNCE_IMAP_MAILBOX="INBOX"
 ```
 
-Quando a campanha termina de enviar, o worker agenda automaticamente checagens IMAP usando a mesma credencial temporária validada no login ou no disparo SMTP da campanha. Essas checagens rodam em segundo plano e atualizam os logs da campanha com status `BOUNCED` quando encontram retornos.
+Quando a campanha termina de enviar, o worker agenda automaticamente checagens IMAP usando a mesma credencial temporária validada no login ou no disparo SMTP da campanha. Para aplicações externas, o worker usa a credencial protegida salva na própria aplicação. Essas checagens rodam em segundo plano e atualizam os logs com status `BOUNCED` quando encontram retornos.
 
 A guia Logs não solicita senha IMAP nem oferece checagem manual. A rotina automática usa a credencial temporária da sessão e mantém a senha fora do PostgreSQL e dos logs.
 
-A rotina lê mensagens não vistas, detecta DSN/bounces, marca o destinatário como `Falhou`, registra `BOUNCED` nos logs de envio e reavalia o status da campanha.
+A rotina lê mensagens não vistas, detecta DSN/bounces, marca o destinatário como `Falhou` em campanhas, registra `BOUNCED` nos logs de envio e reavalia o status da campanha. Para tarefas da API externa, o mesmo bounce altera a tarefa para `BOUNCED` e cria o evento correspondente na área de logs das aplicações.
 
 ## Administração
 

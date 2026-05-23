@@ -1,13 +1,12 @@
 import { Mail, PlugZap, ShieldCheck, SlidersHorizontal, Users } from "lucide-react";
 import { AppShell } from "@/components/layout/app-shell";
 import { Card, CardContent, CardHeader } from "@/components/ui/card";
+import { ApplicationLogs } from "@/app/admin/application-logs";
 import { ApplicationManagement } from "@/app/admin/application-management";
-import { DomainRateLimitForm } from "@/app/admin/domain-rate-limit-form";
 import { UserManagementTable } from "@/app/admin/user-management-table";
 import { requireCurrentUser } from "@/lib/auth/current-user";
 import { listApplicationsForAdmin } from "@/services/api-email/api-application-service";
-import { listRecentApiEmailTasks } from "@/services/api-email/api-email-service";
-import { listDomainRateLimits } from "@/services/admin/domain-rate-limit-service";
+import { listApiEmailLogs } from "@/services/api-email/api-email-service";
 import { getQueueStatusSummary } from "@/services/admin/queue-status-service";
 import { listManagedUsers } from "@/services/admin/user-admin-service";
 
@@ -35,12 +34,11 @@ export default async function AdminPage() {
     );
   }
 
-  const [limits, queueStatus, users, applications, apiEmailTasks] = await Promise.all([
-    listDomainRateLimits(),
+  const [queueStatus, users, applications, apiEmailLogs] = await Promise.all([
     getQueueStatusSummary(),
     listManagedUsers(),
     listApplicationsForAdmin(),
-    listRecentApiEmailTasks()
+    listApiEmailLogs({ page: 1, pageSize: 50 })
   ]);
   const metrics = [
     { title: "Jobs aguardando", value: queueStatus.waiting, icon: SlidersHorizontal },
@@ -108,63 +106,39 @@ export default async function AdminPage() {
           <div className="flex items-center gap-2">
             <Mail className="h-4 w-4 text-teal-700" />
             <div>
-              <h2 className="text-base font-semibold text-slate-950">Últimos envios via API</h2>
-              <p className="mt-1 text-sm text-muted-foreground">Leitura operacional das tarefas criadas por aplicações externas.</p>
+              <h2 className="text-base font-semibold text-slate-950">Logs das aplicações externas</h2>
+              <p className="mt-1 text-sm text-muted-foreground">
+                Histórico operacional das aplicações externas, incluindo envio, falha e bounce.
+              </p>
             </div>
           </div>
         </CardHeader>
         <CardContent className="p-0">
-          <div className="overflow-x-auto">
-            <table className="w-full min-w-[900px] text-left text-sm">
-              <thead className="border-b border-border bg-slate-50 text-xs uppercase text-muted-foreground">
-                <tr>
-                  <th className="px-5 py-3">Aplicação</th>
-                  <th className="px-5 py-3">Destinatário</th>
-                  <th className="px-5 py-3">Status</th>
-                  <th className="px-5 py-3">Referência</th>
-                  <th className="px-5 py-3">Erro</th>
-                </tr>
-              </thead>
-              <tbody>
-                {apiEmailTasks.length === 0 ? (
-                  <tr>
-                    <td className="px-5 py-8 text-center text-muted-foreground" colSpan={5}>
-                      Nenhum envio via API registrado.
-                    </td>
-                  </tr>
-                ) : null}
-                {apiEmailTasks.map((task) => (
-                  <tr key={task.id} className="border-b border-border last:border-0">
-                    <td className="px-5 py-4 font-medium text-slate-900">{task.application.name}</td>
-                    <td className="px-5 py-4 text-muted-foreground">{task.toEmail}</td>
-                    <td className="px-5 py-4 text-muted-foreground">{task.status}</td>
-                    <td className="px-5 py-4 text-muted-foreground">{task.externalReferenceId ?? "-"}</td>
-                    <td className="max-w-xs px-5 py-4 text-muted-foreground">
-                      <span className="line-clamp-2" title={task.lastError ?? undefined}>
-                        {task.lastError ?? "-"}
-                      </span>
-                    </td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
-        </CardContent>
-      </Card>
-      <Card className="mt-6">
-        <CardHeader>
-          <h2 className="text-base font-semibold text-slate-950">Limites por domínio</h2>
-          <p className="mt-1 text-sm text-muted-foreground">Atualize ou crie regras de envio. O delay é informado em segundos.</p>
-        </CardHeader>
-        <CardContent>
-          <DomainRateLimitForm
-            limits={limits.map((limit) => ({
-              id: limit.id,
-              domain: limit.domain,
-              messagesPerMinute: limit.messagesPerMinute,
-              delayMs: limit.delayMs,
-              active: limit.active
+          <ApplicationLogs
+            applications={applications.map((application) => ({
+              id: application.id,
+              name: application.name
             }))}
+            initialResult={{
+              page: apiEmailLogs.page,
+              pageSize: apiEmailLogs.pageSize,
+              total: apiEmailLogs.total,
+              retentionDays: apiEmailLogs.retentionDays,
+              items: apiEmailLogs.items.map((item) => ({
+                id: item.id,
+                applicationId: item.applicationId,
+                applicationName: item.applicationName,
+                recipientEmail: item.recipientEmail,
+                senderEmail: item.senderEmail,
+                status: item.status,
+                externalReferenceId: item.externalReferenceId,
+                message: item.message,
+                smtpResponse: item.smtpResponse,
+                attempts: item.attempts,
+                updatedAt: item.updatedAt.toISOString(),
+                createdAt: item.createdAt.toISOString()
+              }))
+            }}
           />
         </CardContent>
       </Card>

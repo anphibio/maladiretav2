@@ -62,6 +62,7 @@ enum ApiEmailTaskStatus {
   SENDING
   SENT
   FAILED
+  BOUNCED
 }
 
 model User {
@@ -94,6 +95,7 @@ model Application {
 
   tokens     ApiToken[]
   emailTasks ApiEmailTask[]
+  emailEvents ApiEmailEvent[]
 
   @@index([isActive])
   @@map("applications")
@@ -131,15 +133,41 @@ model ApiEmailTask {
   smtpResponse        String?
   scheduledAt         DateTime?
   sentAt              DateTime?
+  bouncedAt           DateTime?
   createdAt           DateTime           @default(now())
   updatedAt           DateTime           @updatedAt
 
   application Application @relation(fields: [applicationId], references: [id])
+  events      ApiEmailEvent[]
 
   @@index([applicationId, status])
   @@index([externalReferenceId])
   @@index([createdAt])
   @@map("api_email_tasks")
+}
+
+model ApiEmailEvent {
+  id                  String             @id @default(cuid())
+  applicationId       String
+  taskId              String
+  recipientEmail      String
+  senderEmail         String
+  status              ApiEmailTaskStatus
+  externalReferenceId String?
+  message             String?
+  smtpResponse        String?
+  attempts            Int                @default(0)
+  createdAt           DateTime           @default(now())
+
+  application Application  @relation(fields: [applicationId], references: [id], onDelete: Cascade)
+  task        ApiEmailTask @relation(fields: [taskId], references: [id], onDelete: Cascade)
+
+  @@index([applicationId, createdAt])
+  @@index([taskId])
+  @@index([recipientEmail])
+  @@index([status])
+  @@index([createdAt])
+  @@map("api_email_events")
 }
 
 model Role {

@@ -3,6 +3,7 @@ import { decryptSecret, encryptSecret } from "@/lib/security/credential-encrypti
 
 const CREDENTIAL_TTL_SECONDS = 60 * 60 * 8;
 const AUTO_BOUNCE_CHECKS_KEY_PREFIX = "zimbra:campaign-bounce-checks:";
+const AUTO_API_BOUNCE_CHECKS_KEY_PREFIX = "zimbra:api-bounce-checks:";
 
 function getCredentialKey(campaignId: string): string {
   return `zimbra:campaign-credential:${campaignId}`;
@@ -14,6 +15,10 @@ function getUserCredentialKey(email: string): string {
 
 function getBounceChecksKey(campaignId: string): string {
   return `${AUTO_BOUNCE_CHECKS_KEY_PREFIX}${campaignId}`;
+}
+
+function getApiBounceChecksKey(applicationId: string): string {
+  return `${AUTO_API_BOUNCE_CHECKS_KEY_PREFIX}${applicationId}`;
 }
 
 function encryptCredential(input: { email: string; password: string }): string {
@@ -99,4 +104,13 @@ export async function reserveAutoBounceChecksSchedule(campaignId: string) {
 
 export async function deleteAutoBounceChecksScheduled(campaignId: string) {
   await getRedisClient().del(getBounceChecksKey(campaignId));
+}
+
+export async function reserveAutoApiBounceChecksSchedule(applicationId: string) {
+  const result = await getRedisClient().set(getApiBounceChecksKey(applicationId), "scheduled", "EX", CREDENTIAL_TTL_SECONDS, "NX");
+  return result === "OK";
+}
+
+export async function deleteAutoApiBounceChecksScheduled(applicationId: string) {
+  await getRedisClient().del(getApiBounceChecksKey(applicationId));
 }

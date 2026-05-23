@@ -1,4 +1,4 @@
-import type { ApiEmailTaskStatus, Application } from "@prisma/client";
+import { ApiEmailTaskStatus, type Application, type Prisma } from "@prisma/client";
 import { prisma } from "@/lib/prisma/client";
 import { enqueueApiEmail } from "@/services/queue/email-queue";
 import { getSystemSettings } from "@/services/settings/settings-service";
@@ -21,6 +21,10 @@ type RateState = {
 };
 
 const ONE_HOUR_MS = 60 * 60 * 1000;
+const API_EMAIL_RETENTION_DAYS = 30;
+const API_EMAIL_RETENTION_MS = API_EMAIL_RETENTION_DAYS * 24 * 60 * 60 * 1000;
+
+type ApiEmailEventWriter = Prisma.TransactionClient | typeof prisma;
 
 function normalizeTask(input: SendApiEmailItem) {
   const body = input.body ?? input.htmlBody ?? input.textBody ?? "";
@@ -31,6 +35,35 @@ function normalizeTask(input: SendApiEmailItem) {
     textBody: input.textBody ?? body.replace(/<[^>]+>/g, " ").replace(/\s+/g, " ").trim(),
     externalReferenceId: input.externalReferenceId?.trim() || undefined
   };
+}
+
+export async function registerApiEmailEvent(
+  client: ApiEmailEventWriter,
+  input: {
+    applicationId: string;
+    taskId: string;
+    recipientEmail: string;
+    senderEmail: string;
+    status: ApiEmailTaskStatus;
+    externalReferenceId?: string | null;
+    message?: string | null;
+    smtpResponse?: string | null;
+    attempts?: number;
+  }
+) {
+  return client.apiEmailEvent.create({
+    data: {
+      applicationId: input.applicationId,
+      taskId: input.taskId,
+      recipientEmail: input.recipientEmail,
+      senderEmail: input.senderEmail,
+      status: input.status,
+      externalReferenceId: input.externalReferenceId,
+      message: input.message,
+      smtpResponse: input.smtpResponse,
+      attempts: input.attempts ?? 0
+    }
+  });
 }
 
 function randomBetween(min: number, max: number): number {
@@ -115,6 +148,15 @@ export async function createApiEmailTasks(input: {
           scheduledAt: new Date(now + delayMs)
         }
       });
+      await registerApiEmailEvent(tx, {
+        applicationId: task.applicationId,
+        taskId: task.id,
+        recipientEmail: task.toEmail,
+        senderEmail: task.senderEmail,
+        status: ApiEmailTaskStatus.QUEUED,
+        externalReferenceId: task.externalReferenceId,
+        message: "E-mail recebido pela API e colocado na fila."
+      });
 
       created.push({ task, delayMs });
     }
@@ -142,6 +184,19 @@ export async function createApiEmailTasks(input: {
         data: {
           status: "FAILED",
           lastError: message
+        }
+      });
+      await prisma.$transaction(async (tx) => {
+        for (const item of tasks) {
+          await registerApiEmailEvent(tx, {
+            applicationId: item.task.applicationId,
+            taskId: item.task.id,
+            recipientEmail: item.task.toEmail,
+            senderEmail: item.task.senderEmail,
+            status: ApiEmailTaskStatus.FAILED,
+            externalReferenceId: item.task.externalReferenceId,
+            message
+          });
         }
       });
 
@@ -194,6 +249,14 @@ export async function getApiEmailStatus(input: { applicationId: string; id: stri
     where: {
       id: input.id,
       applicationId: input.applicationId
+    },
+    include: {
+      events: {
+        orderBy: {
+          createdAt: "desc"
+        },
+        take: 20
+      }
     }
   });
 }
@@ -208,4 +271,182 @@ export async function listRecentApiEmailTasks() {
     },
     take: 20
   });
+}
+
+export async function listApiEmailLogs(input?: {
+  applicationId?: string;
+  status?: ApiEmailTaskStatus;
+  search?: string;
+  page?: number;
+  pageSize?: number;
+}) {
+  const page = input?.page ?? 1;
+  const pageSize = input?.pageSize ?? 50;
+  const search = input?.search?.trim();
+  const where: Prisma.ApiEmailTaskWhereInput = {
+    ...(input?.applicationId ? { applicationId: input.applicationId } : {}),
+    ...(input?.status ? { status: input.status } : {}),
+    ...(search
+      ? {
+          OR: [
+            { toEmail: { contains: search, mode: "insensitive" } },
+            { senderEmail: { contains: search, mode: "insensitive" } },
+            { externalReferenceId: { contains: search, mode: "insensitive" } },
+            { lastError: { contains: search, mode: "insensitive" } },
+            { smtpResponse: { contains: search, mode: "insensitive" } },
+            {
+              events: {
+                some: {
+                  OR: [
+                    { message: { contains: search, mode: "insensitive" } },
+                    { smtpResponse: { contains: search, mode: "insensitive" } }
+                  ]
+                }
+              }
+            }
+          ]
+        }
+      : {})
+  };
+
+  const [total, items] = await Promise.all([
+    prisma.apiEmailTask.count({ where }),
+    prisma.apiEmailTask.findMany({
+      where,
+      include: {
+        application: true,
+        events: {
+          orderBy: {
+            createdAt: "desc"
+          },
+          take: 1
+        }
+      },
+      orderBy: {
+        updatedAt: "desc"
+      },
+      skip: (page - 1) * pageSize,
+      take: pageSize
+    })
+  ]);
+
+  return {
+    page,
+    pageSize,
+    total,
+    retentionDays: API_EMAIL_RETENTION_DAYS,
+    items: items.map((item) => {
+      const latestEvent = item.events[0];
+
+      return {
+        id: item.id,
+        applicationId: item.applicationId,
+        applicationName: item.application.name,
+        recipientEmail: item.toEmail,
+        senderEmail: item.senderEmail,
+        status: item.status,
+        externalReferenceId: item.externalReferenceId,
+        message: latestEvent?.message ?? item.lastError,
+        smtpResponse: latestEvent?.smtpResponse ?? item.smtpResponse,
+        attempts: item.attempts,
+        updatedAt: item.updatedAt,
+        createdAt: item.createdAt
+      };
+    })
+  };
+}
+
+export async function markApiEmailTaskBounced(input: {
+  taskId?: string;
+  recipientEmail?: string;
+  senderEmail?: string;
+  reason: string;
+}) {
+  const normalizedRecipient = input.recipientEmail?.trim().toLowerCase();
+  const normalizedSender = input.senderEmail?.trim().toLowerCase();
+  const task = input.taskId
+    ? await prisma.apiEmailTask.findUnique({
+        where: { id: input.taskId },
+        include: { application: true }
+      })
+    : normalizedRecipient
+      ? await prisma.apiEmailTask.findFirst({
+          where: {
+            toEmail: normalizedRecipient,
+            ...(normalizedSender ? { senderEmail: normalizedSender } : {}),
+            status: { in: [ApiEmailTaskStatus.SENT, ApiEmailTaskStatus.SENDING, ApiEmailTaskStatus.QUEUED] },
+            createdAt: {
+              gte: new Date(Date.now() - API_EMAIL_RETENTION_MS)
+            }
+          },
+          include: { application: true },
+          orderBy: { createdAt: "desc" }
+        })
+      : null;
+
+  if (!task) {
+    return null;
+  }
+
+  if (task.status === ApiEmailTaskStatus.BOUNCED) {
+    return task;
+  }
+
+  return prisma.$transaction(async (tx) => {
+    const updated = await tx.apiEmailTask.update({
+      where: { id: task.id },
+      data: {
+        status: ApiEmailTaskStatus.BOUNCED,
+        lastError: input.reason,
+        bouncedAt: new Date()
+      }
+    });
+
+    await registerApiEmailEvent(tx, {
+      applicationId: task.applicationId,
+      taskId: task.id,
+      recipientEmail: task.toEmail,
+      senderEmail: task.senderEmail,
+      status: ApiEmailTaskStatus.BOUNCED,
+      externalReferenceId: task.externalReferenceId,
+      message: input.reason,
+      smtpResponse: task.smtpResponse,
+      attempts: task.attempts
+    });
+
+    return updated;
+  });
+}
+
+export async function cleanupOldApiEmailLogs() {
+  const cutoff = new Date(Date.now() - API_EMAIL_RETENTION_MS);
+  const [events, tasks] = await prisma.$transaction([
+    prisma.apiEmailEvent.deleteMany({
+      where: {
+        createdAt: {
+          lt: cutoff
+        }
+      }
+    }),
+    prisma.apiEmailTask.deleteMany({
+      where: {
+        createdAt: {
+          lt: cutoff
+        },
+        events: {
+          none: {
+            createdAt: {
+              gte: cutoff
+            }
+          }
+        }
+      }
+    })
+  ]);
+
+  return {
+    retentionDays: API_EMAIL_RETENTION_DAYS,
+    deletedEvents: events.count,
+    deletedTasks: tasks.count
+  };
 }

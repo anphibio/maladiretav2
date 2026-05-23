@@ -3,6 +3,7 @@ import { connect as tlsConnect, TLSSocket } from "tls";
 import { AuditAction } from "@prisma/client";
 import { getEnv } from "@/config/env";
 import { prisma } from "@/lib/prisma/client";
+import { markApiEmailTaskBounced } from "@/services/api-email/api-email-service";
 import { registerAuditLog } from "@/services/audit/audit-service";
 import { reconcileCampaignDeliveryStatus } from "@/services/campaigns/campaign-service";
 
@@ -11,7 +12,9 @@ type ImapConnection = Socket | TLSSocket;
 type BounceCandidate = {
   campaignId?: string;
   recipientId?: string;
+  apiEmailTaskId?: string;
   recipientEmail?: string;
+  senderEmail?: string;
   reason: string;
 };
 
@@ -74,6 +77,7 @@ function parseBounce(raw: string): BounceCandidate | null {
 
   const campaignId = getHeaderValue(raw, "X-Campaign-Id");
   const recipientId = getHeaderValue(raw, "X-Recipient-Id");
+  const apiEmailTaskId = getHeaderValue(raw, "X-Api-Email-Task-Id");
   const xFailedRecipients = getHeaderValue(raw, "X-Failed-Recipients");
   const finalRecipient = getDeliveryStatusValue(raw, "Final-Recipient")?.split(";").at(-1);
   const originalRecipient = getDeliveryStatusValue(raw, "Original-Recipient")?.split(";").at(-1);
@@ -93,13 +97,14 @@ function parseBounce(raw: string): BounceCandidate | null {
     return null;
   }
 
-  if (!campaignId && !recipientId && !recipientEmail) {
+  if (!campaignId && !recipientId && !apiEmailTaskId && !recipientEmail) {
     return null;
   }
 
   return {
     campaignId,
     recipientId,
+    apiEmailTaskId,
     recipientEmail,
     reason
   };
@@ -237,7 +242,42 @@ async function findBounceRecipient(candidate: BounceCandidate) {
 }
 
 async function applyBounce(candidate: BounceCandidate): Promise<BounceResult> {
+  if (candidate.apiEmailTaskId) {
+    const apiTask = await markApiEmailTaskBounced({
+      taskId: candidate.apiEmailTaskId,
+      recipientEmail: candidate.recipientEmail,
+      senderEmail: candidate.senderEmail,
+      reason: candidate.reason
+    });
+
+    if (apiTask) {
+      return {
+        uid: 0,
+        ok: true,
+        recipientEmail: apiTask.toEmail,
+        message: "Bounce via API registrado."
+      };
+    }
+  }
+
   const recipient = await findBounceRecipient(candidate);
+
+  if (!recipient && !candidate.campaignId && !candidate.recipientId) {
+    const apiTask = await markApiEmailTaskBounced({
+      recipientEmail: candidate.recipientEmail,
+      senderEmail: candidate.senderEmail,
+      reason: candidate.reason
+    });
+
+    if (apiTask) {
+      return {
+        uid: 0,
+        ok: true,
+        recipientEmail: apiTask.toEmail,
+        message: "Bounce via API registrado."
+      };
+    }
+  }
 
   if (!recipient) {
     return {
@@ -340,7 +380,8 @@ export async function processBounceMailbox(input: { email: string; password: str
 
     for (const uid of uids) {
       const fetchResponse = await client.command(`UID FETCH ${uid} BODY.PEEK[]`);
-      const candidate = parseBounce(extractFetchBody(fetchResponse));
+      const parsed = parseBounce(extractFetchBody(fetchResponse));
+      const candidate = parsed ? { ...parsed, senderEmail: input.email.toLowerCase() } : null;
 
       if (!candidate) {
         results.push({ uid, ok: false, message: "Mensagem ignorada: não parece ser bounce rastreável." });
