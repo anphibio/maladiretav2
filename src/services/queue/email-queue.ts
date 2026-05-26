@@ -15,6 +15,7 @@ export type EmailQueueJob = {
 export type BounceQueueJob = {
   campaignId?: string;
   applicationId?: string;
+  apiEmailTaskId?: string;
   senderEmail: string;
   checkNumber: number;
   totalChecks: number;
@@ -60,10 +61,10 @@ export async function enqueueCampaignRecipient(job: EmailQueueJob, delayMs = 0):
 
 export async function enqueueBounceCheck(job: BounceQueueJob, delayMs = 0): Promise<string> {
   const queue = getBounceQueue();
-  const ownerId = job.campaignId ?? job.applicationId;
+  const ownerId = job.campaignId ?? job.apiEmailTaskId ?? job.applicationId;
 
   if (!ownerId) {
-    throw new Error("Informe campanha ou aplicação para checar bounces.");
+    throw new Error("Informe campanha, aplicação ou tarefa da API para checar bounces.");
   }
 
   const queued = await queue.add("check-bounces", job, {

@@ -59,8 +59,8 @@ async function ensureAutomaticBounceChecks(campaignId: string, senderEmail: stri
   );
 }
 
-async function ensureAutomaticApiBounceChecks(applicationId: string, senderEmail: string) {
-  const reserved = await reserveAutoApiBounceChecksSchedule(applicationId);
+async function ensureAutomaticApiBounceChecks(apiEmailTaskId: string, applicationId: string, senderEmail: string) {
+  const reserved = await reserveAutoApiBounceChecksSchedule(apiEmailTaskId);
 
   if (!reserved) {
     return;
@@ -71,6 +71,7 @@ async function ensureAutomaticApiBounceChecks(applicationId: string, senderEmail
       enqueueBounceCheck(
         {
           applicationId,
+          apiEmailTaskId,
           senderEmail,
           checkNumber: index + 1,
           totalChecks: AUTO_BOUNCE_CHECK_DELAYS_MS.length
@@ -293,7 +294,7 @@ new Worker<ApiEmailQueueJob>(
         });
       });
 
-      await ensureAutomaticApiBounceChecks(task.applicationId, task.senderEmail);
+      await ensureAutomaticApiBounceChecks(task.id, task.applicationId, task.senderEmail);
 
       return { sent: true };
     } catch (error) {
@@ -363,8 +364,8 @@ new Worker<BounceQueueJob>(
       await deleteTemporaryZimbraCredential(job.data.campaignId);
     }
 
-    if (job.data.checkNumber >= job.data.totalChecks && job.data.applicationId) {
-      await deleteAutoApiBounceChecksScheduled(job.data.applicationId);
+    if (job.data.checkNumber >= job.data.totalChecks && job.data.apiEmailTaskId) {
+      await deleteAutoApiBounceChecksScheduled(job.data.apiEmailTaskId);
     }
 
     return {

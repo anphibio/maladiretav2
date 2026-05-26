@@ -17,8 +17,8 @@ function getBounceChecksKey(campaignId: string): string {
   return `${AUTO_BOUNCE_CHECKS_KEY_PREFIX}${campaignId}`;
 }
 
-function getApiBounceChecksKey(applicationId: string): string {
-  return `${AUTO_API_BOUNCE_CHECKS_KEY_PREFIX}${applicationId}`;
+function getApiBounceChecksKey(apiEmailTaskId: string): string {
+  return `${AUTO_API_BOUNCE_CHECKS_KEY_PREFIX}${apiEmailTaskId}`;
 }
 
 function encryptCredential(input: { email: string; password: string }): string {
@@ -106,11 +106,11 @@ export async function deleteAutoBounceChecksScheduled(campaignId: string) {
   await getRedisClient().del(getBounceChecksKey(campaignId));
 }
 
-export async function reserveAutoApiBounceChecksSchedule(applicationId: string) {
-  const result = await getRedisClient().set(getApiBounceChecksKey(applicationId), "scheduled", "EX", CREDENTIAL_TTL_SECONDS, "NX");
+export async function reserveAutoApiBounceChecksSchedule(apiEmailTaskId: string) {
+  const result = await getRedisClient().set(getApiBounceChecksKey(apiEmailTaskId), "scheduled", "EX", CREDENTIAL_TTL_SECONDS, "NX");
   return result === "OK";
 }
 
-export async function deleteAutoApiBounceChecksScheduled(applicationId: string) {
-  await getRedisClient().del(getApiBounceChecksKey(applicationId));
+export async function deleteAutoApiBounceChecksScheduled(apiEmailTaskId: string) {
+  await getRedisClient().del(getApiBounceChecksKey(apiEmailTaskId));
 }
